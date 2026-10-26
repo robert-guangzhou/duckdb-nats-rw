@@ -1,7 +1,7 @@
 # name: test/sql/scan.test
-# description: nats_rw_scan bounded snapshot (TP-02a/b/c/d/g, TP-02h-lite, TP-05a)
+# description: nats_rw_scan bounded snapshot (TP-02a/b/c/d/g, TP-02h-lite, TP-05a/b)
 # group: [sql]
-# plan: plans/nats-rw-duckdb-extension-test-plan.md — TP-02 组
+# plan: plans/nats-rw-duckdb-extension-test-plan.md — TP-02 组 + TP-05a/b
 # fixtures: test/sql/fixtures/seed.sh（重建 seed_stream，10 条消息 seq 1..10：seed.a.1..5 unit=alpha / seed.b.1..5 unit=beta）
 
 require nats_rw
@@ -11,6 +11,16 @@ statement error
 SELECT count(*) FROM nats_rw_scan('no_such_stream', url := 'nats://nats:4222');
 ----
 no_such_stream
+
+# TP-05b-1：错误端口（服务未监听）→ 快速拒绝为可读错误，而非挂起
+statement error
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4223');
+----
+
+# TP-05b-2：不可达地址 → 5s 连接超时上限内返回错误（连接超时常量见 rust/src/scan.rs）
+statement error
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://10.255.255.1:4222');
+----
 
 # TP-02a：全量快照 = 种子 10 条，seq 1..10
 query III
