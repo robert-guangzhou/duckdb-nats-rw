@@ -1,0 +1,66 @@
+# name: test/sql/scan.test
+# description: nats_rw_scan bounded snapshot (TP-02a/b/c/d/g, TP-02h-lite, TP-05a)
+# group: [sql]
+# plan: plans/nats-rw-duckdb-extension-test-plan.md — TP-02 组
+# fixtures: test/sql/fixtures/seed.sh（重建 seed_stream，10 条消息 seq 1..10：seed.a.1..5 unit=alpha / seed.b.1..5 unit=beta）
+
+require nats_rw
+
+# TP-05a：不存在的流报可读错误（含流名）
+statement error
+SELECT count(*) FROM nats_rw_scan('no_such_stream', url := 'nats://nats:4222');
+----
+no_such_stream
+
+# TP-02a：全量快照 = 种子 10 条，seq 1..10
+query III
+SELECT count(*), min(seq), max(seq) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222');
+----
+10	1	10
+
+# TP-02g：有界快照稳定性——两次扫描计数一致
+query I
+SELECT ((SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222'))
+      = (SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222')))::INTEGER;
+----
+1
+
+# TP-02b：subject 通配符过滤（MVP 为客户端过滤，语义同 NATS）
+query T
+SELECT CAST(payload AS VARCHAR) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', subject := 'seed.a.>') ORDER BY seq;
+----
+payload-a-1
+payload-a-2
+payload-a-3
+payload-a-4
+payload-a-5
+
+# TP-02c：seq 闭区间 [3,5]
+query II
+SELECT min(seq), max(seq) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', start_seq := 3, end_seq := 5);
+----
+3	5
+
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', start_seq := 3, end_seq := 5);
+----
+3
+
+# TP-02d：时间范围与全量交叉验证（1970..2262 全覆盖）
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222',
+    start_time := TIMESTAMPTZ '1970-01-01 00:00:00+00', end_time := TIMESTAMPTZ '2262-01-01 00:00:00+00');
+----
+10
+
+# 时间列均非空
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222') WHERE ts_nats IS NOT NULL;
+----
+10
+
+# TP-02h-lite：header 取每键首个值（多值完整支持在后续阶段）
+query T
+SELECT DISTINCT headers['unit'] FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222') WHERE subject LIKE 'seed.a%' ORDER BY 1;
+----
+[alpha]

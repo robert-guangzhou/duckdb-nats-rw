@@ -30,13 +30,15 @@ services:
       nats:
         condition: service_started
 
-  # 播种用（profile 控制）：docker compose --profile seed run --rm seeder <cmd>
+  # 播种用（profile 控制）：docker compose --profile seed run --rm seeder sh /test/sql/fixtures/seed.sh
   seeder:
     image: synadia/nats-box:latest
     profiles: ["seed"]
     depends_on:
       nats:
         condition: service_started
+    volumes:
+      - ../test:/test:ro
     entrypoint: ["sleep", "infinity"]
 
 volumes:

@@ -2,6 +2,7 @@
 
 #include "nats_rw_extension.hpp"
 #include "nats_rw_rust.h" // cbindgen 生成；变更后运行 rust/regen-header.sh
+#include "nats_rw_scan.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
@@ -23,9 +24,12 @@ static void NatsRwVersionFun(DataChunk &args, ExpressionState &state, Vector &re
 }
 
 static void LoadInternal(ExtensionLoader &loader) {
-	// 阶段二起在此注册 nats_rw_scan、COPY 替身、secrets 与元数据函数
+	// 版本函数（TP-01）
 	auto version_function = ScalarFunction("nats_rw_version", {}, LogicalType::VARCHAR, NatsRwVersionFun);
 	loader.RegisterFunction(version_function);
+
+	// 读取（TP-02 组）：有界快照扫描
+	NatsRwScanFunction::Register(loader);
 }
 
 void NatsRwExtension::Load(ExtensionLoader &loader) {
