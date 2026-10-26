@@ -1,0 +1,47 @@
+name: nats-rw
+
+services:
+  nats:
+    image: nats:2.11
+    container_name: nats-rw-nats
+    command: ["--jetstream", "--store_dir=/data", "--http_port=8222"]
+    ports:
+      - "4222:4222"
+      - "8222:8222"
+    volumes:
+      - nats-data:/data
+    healthcheck:
+      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+  builder:
+    build:
+      context: ..
+      dockerfile: docker/dev.Dockerfile
+    container_name: nats-rw-builder
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace
+      - cargo-cache:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+    command: ["sleep", "infinity"]
+    depends_on:
+      nats:
+        condition: service_healthy
+
+  # 播种用（profile 控制）：docker compose --profile seed run --rm seeder <cmd>
+  seeder:
+    image: synadia/nats-box:latest
+    profiles: ["seed"]
+    depends_on:
+      nats:
+        condition: service_healthy
+    entrypoint: ["sleep", "infinity"]
+
+volumes:
+  nats-data:
+  cargo-cache:
+  cargo-git:

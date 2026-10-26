@@ -1,0 +1,12 @@
+[package]
+name = "nats_rw"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "NATS JetStream read/write core for the nats_rw DuckDB extension"
+
+[lib]
+crate-type = ["staticlib"]
+
+# 阶段二起在此增加运行时依赖：async-nats、tokio、serde_json
+[dependencies]

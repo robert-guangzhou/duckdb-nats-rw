@@ -1,0 +1,19 @@
+# name: test/sql/nats_rw.test
+# description: test nats_rw extension scaffolding (Rust core version via FFI)
+# group: [sql]
+# plan: plans/nats-rw-duckdb-extension-test-plan.md — TP-01
+
+# Before we load the extension, this will fail
+statement error
+SELECT nats_rw_version();
+----
+Catalog Error: Scalar Function with name nats_rw_version does not exist!
+
+# Require statement will ensure this test is run with this extension loaded
+require nats_rw
+
+# The version is produced by the Rust core through the FFI chain (TP-01)
+query T
+SELECT nats_rw_version();
+----
+0.1.0
