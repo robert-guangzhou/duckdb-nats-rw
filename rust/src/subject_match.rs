@@ -7,8 +7,9 @@ pub(crate) fn subject_matches(pattern: &str, subject: &str) -> bool {
     let mut i = 0;
     while i < p.len() {
         if p[i] == ">" {
-            // `>` 之后的 tokens 全部匹配；忽略 `>` 不在末尾的非法写法，按尾通配处理
-            return true;
+            // `>` 匹配一个及以上剩余 tokens（"a.>" 不匹配 "a" 本身）；
+            // 忽略 `>` 不在末尾的非法写法，按尾通配处理
+            return i < s.len();
         }
         if i >= s.len() {
             return false;

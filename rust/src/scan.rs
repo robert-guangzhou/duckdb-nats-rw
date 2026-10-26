@@ -6,7 +6,7 @@
 
 use std::ffi::CString;
 
-use async_nats::jetstream::StreamMessage;
+use async_nats::jetstream::message::StreamMessage;
 use futures_util::StreamExt;
 
 use crate::subject_match::subject_matches;
@@ -68,13 +68,13 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
         .info()
         .await
         .map_err(|e| format!("stream info for '{}' failed: {e}", p.stream))?;
-    let last_seq = info.state.last_seq;
+    let last_seq = info.state.last_sequence;
 
     let start = p.start_seq.max(1);
     let end = if p.end_seq == 0 { last_seq } else { p.end_seq.min(last_seq) };
     let stream_name = p.stream.clone();
     if start > end {
-        return Ok(Box::new(ScanData { stream: to_cstring(stream_name)?, msgs: Vec::new() }));
+        return Ok(Box::new(ScanData { stream: to_cstring(&stream_name)?, msgs: Vec::new() }));
     }
 
     let mut fetched: Vec<StreamMessage> = Vec::new();
@@ -116,11 +116,9 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
         }
         // header 取每键首个值；多值完整支持列入后续阶段（docs/notes-build.md）
         let mut headers = Vec::new();
-        for (k, v) in m.headers.iter() {
-            headers.push((
-                to_cstring(k.as_str())?,
-                to_cstring(v.to_str().unwrap_or(""))?,
-            ));
+        for (k, values) in m.headers.iter() {
+            let Some(first) = values.first() else { continue };
+            headers.push((to_cstring(&k.to_string())?, to_cstring(first.as_str())?));
         }
         msgs.push(ScanMsg {
             subject: to_cstring(m.subject.as_ref())?,
@@ -130,7 +128,7 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
             payload: m.payload.to_vec(),
         });
     }
-    Ok(Box::new(ScanData { stream: to_cstring(stream_name)?, msgs }))
+    Ok(Box::new(ScanData { stream: to_cstring(&stream_name)?, msgs }))
 }
 
 fn to_cstring(s: &str) -> Result<CString, String> {

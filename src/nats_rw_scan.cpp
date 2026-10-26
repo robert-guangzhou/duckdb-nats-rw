@@ -60,7 +60,7 @@ static void ThrowRustError(const char *err) {
 }
 
 static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunctionBindInput &input,
-                                               vector<LogicalType> &return_types, vector<string> &names) {
+                                               vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto bind_data = make_uniq<NatsRwScanBindData>();
 
 	if (input.inputs.empty() || input.inputs[0].IsNull()) {
@@ -156,7 +156,9 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 		}
 		uint64_t plen = 0;
 		const uint8_t *pdata = nats_rw_scan_payload(raw, i, &plen);
-		row.payload.assign(reinterpret_cast<const char *>(pdata != nullptr ? pdata : ""), plen);
+		if (pdata != nullptr) {
+			row.payload.assign(reinterpret_cast<const char *>(pdata), plen);
+		}
 		(void)stream_name;
 		state->rows.push_back(std::move(row));
 	}
@@ -165,7 +167,8 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 }
 
 static unique_ptr<LocalTableFunctionState> NatsRwScanInitLocal(ExecutionContext &context,
-                                                              TableFunctionInitInput &input) {
+                                                              TableFunctionInitInput &input,
+                                                              GlobalTableFunctionState *global_state) {
 	return nullptr;
 }
 
@@ -193,7 +196,7 @@ static void NatsRwScanExecute(ClientContext &context, TableFunctionInput &data_p
 		output.SetValue(COL_SUBJECT, out, Value(row.subject));
 		output.SetValue(COL_SEQ, out, Value::UBIGINT(row.seq));
 		if (row.time_nanos != 0) {
-			output.SetValue(COL_TS, out, Value::TIMESTAMPTZ(timestamp_t(row.time_nanos / 1000)));
+			output.SetValue(COL_TS, out, Value::TIMESTAMPTZ(timestamp_tz_t(row.time_nanos / 1000)));
 		} else {
 			output.SetValue(COL_TS, out, Value());
 		}
