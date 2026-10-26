@@ -55,6 +55,13 @@ fn is_no_message(err: &str) -> bool {
     e.contains("no message") || e.contains("not found") || e.contains("404")
 }
 
+/// 流未开启 allow_direct 时 direct_get 返回 503 no responders，
+/// 此时回退到 get_raw_message（走流 leader 的 JetStream API）。
+fn is_no_responders(err: &str) -> bool {
+    let e = err.to_lowercase();
+    e.contains("no responders") || e.contains("503")
+}
+
 pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
     let client = async_nats::connect(p.url.as_str())
         .await
@@ -78,19 +85,40 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
     }
 
     let mut fetched: Vec<StreamMessage> = Vec::new();
+    // 读模式（同 nats_js 语义）：优先 direct_get（需 allow_direct），
+    // 无响应者时逐条回退 get_raw_message（无需 allow_direct）。
+    let stream_ref = &stream;
     let mut iter = futures_util::stream::iter(start..=end)
-        .map(|seq| stream.direct_get(seq))
+        .map(move |seq| async move {
+            match stream_ref.direct_get(seq).await {
+                Ok(m) => Ok(Some(m)),
+                Err(e) => {
+                    let text = e.to_string();
+                    if is_no_message(&text) {
+                        return Ok(None);
+                    }
+                    if is_no_responders(&text) {
+                        return match stream_ref.get_raw_message(seq).await {
+                            Ok(m) => Ok(Some(m)),
+                            Err(e2) => {
+                                let t2 = e2.to_string();
+                                if is_no_message(&t2) {
+                                    return Ok(None);
+                                }
+                                Err(format!("get_raw_message failed: {t2}"))
+                            }
+                        };
+                    }
+                    Err(format!("direct_get failed: {text}"))
+                }
+            }
+        })
         .buffer_unordered(p.concurrency.max(1));
     while let Some(item) = iter.next().await {
         match item {
-            Ok(m) => fetched.push(m),
-            Err(e) => {
-                let text = e.to_string();
-                if is_no_message(&text) {
-                    continue;
-                }
-                return Err(format!("direct_get failed on stream '{stream_name}': {text}"));
-            }
+            Ok(Some(m)) => fetched.push(m),
+            Ok(None) => continue,
+            Err(msg) => return Err(format!("read on stream '{stream_name}' failed: {msg}")),
         }
     }
     fetched.sort_by_key(|m| m.sequence);
@@ -153,5 +181,12 @@ mod tests {
         assert!(is_no_message("No Message found"));
         assert!(is_no_message("stream not found"));
         assert!(!is_no_message("connection refused"));
+    }
+
+    #[test]
+    fn no_responders_detection() {
+        assert!(is_no_responders("unable to get message: 503 no responders"));
+        assert!(is_no_responders("503 Service Unavailable"));
+        assert!(!is_no_responders("timeout"));
     }
 }

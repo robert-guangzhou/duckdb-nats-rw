@@ -1,0 +1,11 @@
+# name: test/sql/debug-sig.test
+# description: TEMP debug - no-kwargs variant (delete after use)
+# group: [sql]
+
+require nats_rw
+
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream');
+----
+10
+

@@ -29,8 +29,8 @@ echo "healthz ok"
 echo "[3/6] Rust 单元测试 (cargo test)"
 $COMPOSE exec -T builder bash -c 'cd /workspace/rust && cargo test 2>&1' | tee "$OUT/cargo-test.log" | tail -5
 
-echo "[4/6] 幂等播种 (seed_stream)"
-$COMPOSE --profile seed run --rm seeder sh /test/sql/fixtures/seed.sh 2>&1 | tee "$OUT/seed.log"
+echo "[4/6] 幂等播种 (rust seeder: cargo run --bin seed)"
+$COMPOSE exec -T builder bash -c 'cd /workspace/rust && cargo run --bin seed -- nats://nats:4222 2>&1' | tee "$OUT/seed.log" | tail -2
 
 echo "[5/6] 构建 (make debug)"
 $COMPOSE exec -T builder make debug 2>&1 | tee "$OUT/build-debug.log" | tail -3
