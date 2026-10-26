@@ -9,6 +9,7 @@ RUN apt-get update \
         ninja-build \
         git \
         ca-certificates \
+        curl \
     && rm -rf /var/lib/apt/lists/*
 
 # cbindgen CLI：供 rust/regen-header.sh 重新生成 C 头文件

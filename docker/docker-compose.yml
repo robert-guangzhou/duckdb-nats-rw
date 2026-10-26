@@ -10,12 +10,10 @@ services:
       - "8222:8222"
     volumes:
       - nats-data:/data
+    # 注意：nats:2.11 为无 shell 极简镜像，容器内无法执行 wget/sh，
+    # 健康探测改由 builder 侧 curl http://nats:8222/healthz 完成（见 test/scripts/run-all.sh）。
     healthcheck:
-      test: ["CMD", "wget", "--spider", "-q", "http://localhost:8222/healthz"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-      start_period: 10s
+      test: ["NONE"]
 
   builder:
     build:
@@ -30,7 +28,7 @@ services:
     command: ["sleep", "infinity"]
     depends_on:
       nats:
-        condition: service_healthy
+        condition: service_started
 
   # 播种用（profile 控制）：docker compose --profile seed run --rm seeder <cmd>
   seeder:
@@ -38,7 +36,7 @@ services:
     profiles: ["seed"]
     depends_on:
       nats:
-        condition: service_healthy
+        condition: service_started
     entrypoint: ["sleep", "infinity"]
 
 volumes:
