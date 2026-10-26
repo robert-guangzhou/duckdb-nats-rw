@@ -8,6 +8,7 @@
 #include "duckdb/common/exception.hpp"
 #include "duckdb/function/scalar_function.hpp"
 #include <duckdb/parser/parsed_data/create_scalar_function_info.hpp>
+#include <cstdlib> // std::atexit（退出期 tokio runtime 优雅停机注册）
 
 namespace duckdb {
 
@@ -54,6 +55,10 @@ extern "C" {
 
 DUCKDB_CPP_EXTENSION_ENTRY(nats_rw, loader) {
 	duckdb::LoadInternal(loader);
+	// fix-plan 2026-10-26 F2：退出期先于 ASan/LSan 扫描优雅停机 Rust 侧 tokio
+	// runtime。atexit 为 LIFO——本注册晚于 ASan 启动期注册，因而先执行；
+	// 消除 debug+ASan 构建退出期 DEADLYSIGNAL 递归风暴的触发条件。
+	std::atexit(nats_rw_runtime_shutdown);
 }
 
 } // extern "C"

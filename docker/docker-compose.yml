@@ -21,6 +21,12 @@ services:
       dockerfile: docker/dev.Dockerfile
     container_name: nats-rw-builder
     working_dir: /workspace
+    # fix-plan 2026-10-26：默认 seccomp 禁 personality(ADDR_NO_RANDOMIZE)，
+    # setarch -R 不可用。放开 seccomp 后 debug+ASan 构建与测试可关 ASLR 运行，
+    # 规避 宿主 mmap_rnd_bits=32 × gcc-12 旧 libasan 影子映射随机碰撞
+    # → AddressSanitizer:DEADLYSIGNAL 无限风暴（见 plans/nats-rw-exit-storm-disk-guard-fix-plan.md）。
+    security_opt:
+      - seccomp:unconfined
     volumes:
       - ..:/workspace
       - cargo-cache:/usr/local/cargo/registry
