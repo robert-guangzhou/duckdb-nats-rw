@@ -18,14 +18,18 @@ const VERSION_C: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
 
 /// 进程内共享的 tokio 运行时：DuckDB 线程同步 block_on 使用，
 /// 不与 DuckDB 线程模型混用。
+/// 运行时被有意泄漏（Box::leak）：静态析构阶段 drop Runtime 会在 worker 线程
+/// join 时偶发段错误（2026-10-26 实测：进程退出期 5 次 2 次崩溃）；
+/// 进程级泄漏 2 个线程的资源是可接受的固定代价。
 fn runtime() -> &'static tokio::runtime::Runtime {
-    static RT: OnceLock<tokio::runtime::Runtime> = OnceLock::new();
-    RT.get_or_init(|| {
-        tokio::runtime::Builder::new_multi_thread()
+    static RT: OnceLock<&'static tokio::runtime::Runtime> = OnceLock::new();
+    *RT.get_or_init(|| {
+        let rt = tokio::runtime::Builder::new_multi_thread()
             .worker_threads(2)
             .enable_all()
             .build()
-            .expect("failed to initialize tokio runtime")
+            .expect("failed to initialize tokio runtime");
+        Box::leak(Box::new(rt))
     })
 }
 

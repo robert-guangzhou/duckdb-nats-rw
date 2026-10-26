@@ -178,7 +178,7 @@ static Value NatsRwHeadersValue(const std::vector<std::pair<std::string, std::st
 	for (const auto &h : headers) {
 		map_keys.emplace_back(Value(h.first));
 		// 每键首个值；多值 header 完整支持列入后续阶段
-		map_values.push_back(Value::LIST(LogicalType::LIST(LogicalType::VARCHAR), {Value(h.second)}));
+		map_values.push_back(Value::LIST(LogicalType::VARCHAR, {Value(h.second)}));
 	}
 	return Value::MAP(LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR), std::move(map_keys),
 	                  std::move(map_values));
@@ -188,9 +188,9 @@ static void NatsRwScanExecute(ClientContext &context, TableFunctionInput &data_p
 	auto &bind_data = data_p.bind_data->Cast<NatsRwScanBindData>();
 	auto &state = data_p.global_state->Cast<NatsRwScanGlobalState>();
 
-	while (state.offset < state.rows.size() && output.size() < STANDARD_VECTOR_SIZE) {
+	idx_t out = 0;
+	while (state.offset < state.rows.size() && out < STANDARD_VECTOR_SIZE) {
 		const auto &row = state.rows[state.offset];
-		idx_t out = output.size();
 
 		output.SetValue(COL_STREAM, out, Value(bind_data.stream));
 		output.SetValue(COL_SUBJECT, out, Value(row.subject));
@@ -204,8 +204,9 @@ static void NatsRwScanExecute(ClientContext &context, TableFunctionInput &data_p
 		output.SetValue(COL_PAYLOAD, out, Value::BLOB(row.payload));
 
 		state.offset++;
+		out++;
 	}
-	output.SetCardinality(output.size());
+	output.SetCardinality(out);
 }
 
 void NatsRwScanFunction::Register(ExtensionLoader &loader) {

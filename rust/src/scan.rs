@@ -142,9 +142,13 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
                 continue;
             }
         }
-        // header 取每键首个值；多值完整支持列入后续阶段（docs/notes-build.md）
+        // header 取每键首个值；多值完整支持列入后续阶段（docs/notes-build.md）。
+        // 过滤 NATS 内部传输头（Nats-Time-Stamp 等），不作为用户可见 headers 暴露。
         let mut headers = Vec::new();
         for (k, values) in m.headers.iter() {
+            if k.to_string().to_lowercase().starts_with("nats-") {
+                continue;
+            }
             let Some(first) = values.first() else { continue };
             headers.push((to_cstring(&k.to_string())?, to_cstring(first.as_str())?));
         }
