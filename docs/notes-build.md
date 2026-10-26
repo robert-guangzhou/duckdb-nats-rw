@@ -36,6 +36,7 @@
 - 容器：`docker/dev.Dockerfile`（rust:1.90-bookworm + cmake/ninja/build-essential/git + cbindgen）。
 - `docker/docker-compose.yml`：`nats`（nats:2.11 JetStream）+ `builder`（源码挂载 /workspace，cargo 缓存命名卷）+ `seeder`（synadia/nats-box，profile=seed）。
 - 容器内构建：`make debug`（首跑含 DuckDB 主仓全量编译）；测试 `make test`。
+- ⚠️ 运维教训（2026-10-26）：镜像批量拉取脚本**必须 `set -e` 或逐个校验**——nats-box 镜像拉取曾静默失败，播种时才暴露。minis 上 Docker Hub 不可达，所有镜像一律走 daocloud 前缀拉取 + `docker tag` 回原名。
 
 ## 6. 参考克隆位置（本工作区）
 
