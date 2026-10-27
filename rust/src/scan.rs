@@ -55,9 +55,11 @@ pub(crate) fn sanitize_url(url: &str) -> String {
 }
 
 /// direct_get 对已删除/擦除的序列号返回错误，需跳过后继续。
+/// "404" 仅在与 "message" 同时出现时认定，避免端口号等含 404 子串的错误被误判
+/// （审查 F8，2026-10-27）。
 fn is_no_message(err: &str) -> bool {
     let e = err.to_lowercase();
-    e.contains("no message") || e.contains("not found") || e.contains("404")
+    e.contains("no message") || e.contains("not found") || (e.contains("404") && e.contains("message"))
 }
 
 /// 流未开启 allow_direct 时 direct_get 返回 503 no responders，
@@ -191,7 +193,10 @@ mod tests {
     fn no_message_detection() {
         assert!(is_no_message("No Message found"));
         assert!(is_no_message("stream not found"));
+        assert!(is_no_message("404 no message for sequence"));
         assert!(!is_no_message("connection refused"));
+        // 含 404 子串但与消息无关的错误不得误判（审查 F8）
+        assert!(!is_no_message("connect to port 4040 refused"));
     }
 
     #[test]

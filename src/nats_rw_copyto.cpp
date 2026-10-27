@@ -3,11 +3,13 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
+#include "duckdb/common/types/blob.hpp"
 #include "duckdb/common/types/value.hpp"
 #include "duckdb/function/copy_function.hpp"
 #include "duckdb/parser/expression/constant_expression.hpp"
 #include "duckdb/parser/parsed_data/copy_info.hpp"
 
+#include <cstdio>
 #include <optional>
 #include <string>
 #include <vector>
@@ -40,7 +42,7 @@ struct NatsRwCopyBindData : public FunctionData {
 		auto &other = other_p.Cast<NatsRwCopyBindData>();
 		return stream == other.stream && url == other.url && subject == other.subject &&
 		       create_stream == other.create_stream && has_payload_column == other.has_payload_column &&
-		       payload_column == other.payload_column;
+		       payload_column == other.payload_column && names == other.names;
 	}
 };
 
@@ -167,6 +169,16 @@ static std::string JsonEscape(const std::string &s) {
 	return out;
 }
 
+// 标量值的干净文本（剥掉 Value::ToString() 对时间等类型添加的 SQL 字面量单引号，
+// 避免 JSON 值出现双重引号——审查 F3，2026-10-27）
+static std::string CleanScalarText(const Value &v) {
+	std::string s = v.ToString();
+	if (s.size() >= 2 && s.front() == '\'' && s.back() == '\'') {
+		return s.substr(1, s.size() - 2);
+	}
+	return s;
+}
+
 static std::string ValueToJsonScalar(const Value &v) {
 	if (v.IsNull()) {
 		return "null";
@@ -188,8 +200,8 @@ static std::string ValueToJsonScalar(const Value &v) {
 	case LogicalTypeId::DOUBLE:
 		return v.ToString();
 	default:
-		// 时间戳/日期/DECIMAL 等以字符串形式承载
-		return "\"" + JsonEscape(v.ToString()) + "\"";
+		// 时间戳/日期/DECIMAL 等以干净字符串承载（无 SQL 字面量引号）
+		return "\"" + JsonEscape(CleanScalarText(v)) + "\"";
 	}
 }
 
@@ -210,13 +222,18 @@ static void BuildRows(FunctionData &bind_data_p, DataChunk &input, std::vector<s
 		std::string payload;
 		if (bind_data.has_payload_column) {
 			auto &vec = input.data[payload_idx];
-			if (vec.GetValue(r).IsNull()) {
+			auto val = vec.GetValue(r);
+			if (val.IsNull()) {
 				payload.clear();
-			} else if (vec.GetVectorType() == VectorType::FLAT_VECTOR) {
-				auto &str = FlatVector::GetData<string_t>(vec)[r];
-				payload.assign(str.GetData(), str.GetSize());
+			} else if (val.type().id() == LogicalTypeId::VARCHAR) {
+				// 裸字节取值（对字典/常量等非平面向量同样正确；Value::ToString()
+				// 会产生带引号的 SQL 字面量——审查 F1，2026-10-27）
+				payload = val.GetValue<std::string>();
+			} else if (val.type().id() == LogicalTypeId::BLOB) {
+				// BLOB Value 取裸字节须经字面量往返（GetValue<string> 不返回原始字节——实测）
+				payload = Blob::ToBlob(val.ToString());
 			} else {
-				payload = vec.GetValue(r).ToString();
+				payload = val.ToString();
 			}
 		} else {
 			// 整行 JSON（紧凑格式，键序 = 源列序）

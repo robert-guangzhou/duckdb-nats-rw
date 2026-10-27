@@ -1,8 +1,11 @@
 //! JetStream 写入（阶段三）：COPY TO … (FORMAT nats_rw) 的 Rust 侧实现。
 //!
 //! 语义（Dev Plan 3.3）：逐行 publish 并等待服务端 ack（JetStream at-least-once 持久化）；
-//! 顺序保持与源行一致（串行 publish-ack）。`create_stream := true` 时按目标 subject 精确
-//! 匹配建流；否则流必须已存在。
+//! 顺序保持与源行一致（串行 publish-ack）。`create_stream := true` 且流不存在时按目标
+//! subject 精确匹配建流；**流已存在则原样使用（不改动其 subject 过滤器——审查 F2
+//! 2026-10-27，此前 create_or_update 会静默改写）**；未开 create_stream 时流必须已存在。
+//! ⚠️ 非原子性（审查 F4）：sink 按 chunk 发布，中途失败时已发布部分不回滚，重试会
+//! 产生重复消息之外的新消息——文档须显式声明此 JetStream 语义。
 //! MVP：串行发布；流水线并行（在途批量 ack）列为性能优化项（Dev Plan 七）。
 //! FFI 契约（nats_rw_copy_execute）：0 成功 / 1 错误或 panic 转译（与 scan 一致，无独立 panic 码）。
 
@@ -35,15 +38,18 @@ pub(crate) async fn copy(p: CopyParams, rows: Vec<CopyRow>) -> Result<u64, Strin
         .map_err(|e| format!("connect to '{}' failed: {e}", sanitize_url(&p.url)))?;
     let js = async_nats::jetstream::new(client);
 
-    // 建流或校验流存在
+    // 建流或校验流存在。流已存在时原样使用——绝不改写其 subject 过滤器
+    // （审查 F2：create_or_update 会静默覆盖既有过滤器，已写消息可能失捕）。
     if p.create_stream {
-        js.create_or_update_stream(Config {
-            name: p.stream.clone(),
-            subjects: vec![p.subject.clone()],
-            ..Default::default()
-        })
-        .await
-        .map_err(|e| format!("create_stream '{}' failed: {e}", p.stream))?;
+        if js.get_stream(p.stream.clone()).await.is_err() {
+            js.create_stream(Config {
+                name: p.stream.clone(),
+                subjects: vec![p.subject.clone()],
+                ..Default::default()
+            })
+            .await
+            .map_err(|e| format!("create_stream '{}' failed: {e}", p.stream))?;
+        }
     } else {
         js.get_stream(p.stream.clone())
             .await

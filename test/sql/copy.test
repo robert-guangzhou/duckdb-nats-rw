@@ -79,3 +79,22 @@ statement error
 COPY (SELECT 1) TO 'rt_x' (FORMAT nats_rw, url 'nats://127.0.0.1:1', create_stream 'true');
 ----
 connect
+
+# 审查 F2 回归：create_stream 对已存在流不得改写其 subject 过滤器
+statement ok
+COPY (SELECT 1 AS v) TO 'rt_guard' (FORMAT nats_rw, url 'nats://nats:4222', subject_prefix 'guard.a', create_stream 'true');
+
+# 同流不同 subject：过滤器未被改写 → 发布不被捕获 → 报错（含 subject 名）
+statement error
+COPY (SELECT 2 AS v) TO 'rt_guard' (FORMAT nats_rw, url 'nats://nats:4222', subject_prefix 'guard.b', create_stream 'true');
+----
+guard.b
+
+# 原过滤器仍然有效（正向证明未被改写）
+statement ok
+COPY (SELECT 3 AS v) TO 'rt_guard' (FORMAT nats_rw, url 'nats://nats:4222', subject_prefix 'guard.a');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_guard', url := 'nats://nats:4222');
+----
+2

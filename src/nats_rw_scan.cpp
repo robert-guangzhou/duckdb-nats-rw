@@ -141,7 +141,6 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 
 	size_t len = nats_rw_scan_len(raw);
 	state->rows.reserve(len);
-	const std::string stream_name = nats_rw_scan_stream_name(raw) != nullptr ? nats_rw_scan_stream_name(raw) : bind_data.stream;
 	for (size_t i = 0; i < len; i++) {
 		NatsRwScanRow row;
 		row.subject = nats_rw_scan_subject(raw, i) != nullptr ? nats_rw_scan_subject(raw, i) : "";
@@ -159,7 +158,6 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 		if (pdata != nullptr) {
 			row.payload.assign(reinterpret_cast<const char *>(pdata), plen);
 		}
-		(void)stream_name;
 		state->rows.push_back(std::move(row));
 	}
 	nats_rw_scan_free(raw);

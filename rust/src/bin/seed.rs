@@ -30,6 +30,7 @@ async fn seed(url: &str) -> Result<usize, String> {
     let _ = js.delete_stream("rt_pc").await;
     let _ = js.delete_stream("rt_sub").await;
     let _ = js.delete_stream("rt_rt").await;
+    let _ = js.delete_stream("rt_guard").await;
     js.create_stream(async_nats::jetstream::stream::Config {
         name: "seed_stream".into(),
         subjects: vec!["seed.>".into()],
