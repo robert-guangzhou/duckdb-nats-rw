@@ -43,7 +43,7 @@ pub(crate) struct ScanData {
 }
 
 /// 隐藏 URL 中的 userinfo（user:pass@），防止错误消息泄露凭证（Dev Plan 六章）。
-fn sanitize_url(url: &str) -> String {
+pub(crate) fn sanitize_url(url: &str) -> String {
     match (url.find("://"), url.rfind('@')) {
         (Some(s), Some(at)) if at > s + 3 => {
             let (scheme, _) = url.split_at(s + 3);

@@ -201,7 +201,9 @@ static void NatsRwScanExecute(ClientContext &context, TableFunctionInput &data_p
 			output.SetValue(COL_TS, out, Value());
 		}
 		output.SetValue(COL_HEADERS, out, NatsRwHeadersValue(row.headers));
-		output.SetValue(COL_PAYLOAD, out, Value::BLOB(row.payload));
+		// BLOB_RAW：payload 是原始字节（非 blob 字面量——Value::BLOB(string) 会按
+		// 字面量语义拒绝非 ASCII 裸字节，中文载荷在 2026-10-27 暴露此错）
+		output.SetValue(COL_PAYLOAD, out, Value::BLOB_RAW(row.payload));
 
 		state.offset++;
 		out++;

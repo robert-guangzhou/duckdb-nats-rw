@@ -23,8 +23,13 @@ async fn seed(url: &str) -> Result<usize, String> {
     let client = async_nats::connect(url).await.map_err(|e| e.to_string())?;
     let js = async_nats::jetstream::new(client);
 
-    // 幂等：先删旧流（不存在则忽略），再按固定配置重建，保证 seq 从 1 开始
+    // 幂等：先删旧流（不存在则忽略），再按固定配置重建，保证 seq 从 1 开始。
+    // 同步清理 COPY 测试用的 rt_* 流（copy.test 依赖全新流状态）
     let _ = js.delete_stream("seed_stream").await;
+    let _ = js.delete_stream("rt_stream").await;
+    let _ = js.delete_stream("rt_pc").await;
+    let _ = js.delete_stream("rt_sub").await;
+    let _ = js.delete_stream("rt_rt").await;
     js.create_stream(async_nats::jetstream::stream::Config {
         name: "seed_stream".into(),
         subjects: vec!["seed.>".into()],

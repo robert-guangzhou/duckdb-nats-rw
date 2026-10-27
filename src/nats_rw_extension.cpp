@@ -3,6 +3,7 @@
 #include "nats_rw_extension.hpp"
 #include "nats_rw_rust.h" // cbindgen 生成；变更后运行 rust/regen-header.sh
 #include "nats_rw_scan.hpp"
+#include "nats_rw_copyto.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
@@ -31,6 +32,9 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// 读取（TP-02 组）：有界快照扫描
 	NatsRwScanFunction::Register(loader);
+
+	// 写入（TP-03 组）：COPY … TO '<stream>' (FORMAT nats_rw, …)
+	NatsRwCopyFunction::Register(loader);
 }
 
 void NatsRwExtension::Load(ExtensionLoader &loader) {

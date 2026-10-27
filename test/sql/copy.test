@@ -1,0 +1,81 @@
+# name: test/sql/copy.test
+# description: COPY TO (FORMAT nats_rw) write path (TP-03a/b/c/d/e/f + error paths)
+# group: [sql]
+# plan: plans/nats-rw-duckdb-extension-test-plan.md — TP-03 组
+# fixtures: rt_* 流由 rust seeder 在播种阶段清理（幂等，见 rust/src/bin/seed.rs）
+
+require nats_rw
+
+# TP-03e + TP-03a：create_stream 建流 + 单行写入，默认整行 JSON（紧凑格式）
+statement ok
+COPY (SELECT 'hello' AS v) TO 'rt_stream' (FORMAT nats_rw, url 'nats://nats:4222', create_stream 'true');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_stream', url := 'nats://nats:4222');
+----
+1
+
+# 整行 JSON 序列化格式（键序 = 源列序，紧凑无空格；payload 为 BLOB，
+# VARCHAR 化显示时引号转义为 \x22——2026-10-26 实测 DuckDB blob 显示约定）
+query T
+SELECT CAST(payload AS VARCHAR) FROM nats_rw_scan('rt_stream', url := 'nats://nats:4222');
+----
+{\x22v\x22:\x22hello\x22}
+
+# TP-03b：批量 1000 行追加（流已存在，不传 create_stream），逐 seq 对账无丢失
+statement ok
+COPY (SELECT i FROM range(1000) t(i)) TO 'rt_stream' (FORMAT nats_rw, url 'nats://nats:4222');
+
+query III
+SELECT count(*), min(seq), max(seq) FROM nats_rw_scan('rt_stream', url := 'nats://nats:4222');
+----
+1001	1	1001
+
+# TP-03c：subject_prefix 映射（读回 subject 精确匹配）
+statement ok
+COPY (SELECT 42 AS n) TO 'rt_sub' (FORMAT nats_rw, url 'nats://nats:4222', subject_prefix 'rt.custom', create_stream 'true');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_sub', url := 'nats://nats:4222', subject := 'rt.custom');
+----
+1
+
+# TP-03d + TP-03f：payload_column 模式，中文/空串 round-trip 逐值精确
+statement ok
+COPY (SELECT * FROM (VALUES ('中文测试'), (''), ('a')) t(v)) TO 'rt_pc' (FORMAT nats_rw, url 'nats://nats:4222', payload_column 'v', create_stream 'true');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_pc', url := 'nats://nats:4222') WHERE payload = unhex('E4B8ADE69687E6B58BE8AF95');
+----
+1
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_pc', url := 'nats://nats:4222') WHERE payload = ''::BLOB;
+----
+1
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_pc', url := 'nats://nats:4222') WHERE payload = 'a'::BLOB;
+----
+1
+
+# TP-03f：BLOB 字节级 round-trip（含 NUL 与高字节）
+statement ok
+COPY (SELECT '\x00\xFF\x7F'::BLOB AS b) TO 'rt_rt' (FORMAT nats_rw, url 'nats://nats:4222', payload_column 'b', create_stream 'true');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_rt', url := 'nats://nats:4222') WHERE payload = '\x00\xFF\x7F'::BLOB;
+----
+1
+
+# 错误路径：流不存在且未开 create_stream → 可读错误（含流名）
+statement error
+COPY (SELECT 1) TO 'no_rt_stream' (FORMAT nats_rw, url 'nats://nats:4222');
+----
+no_rt_stream
+
+# 错误路径：服务器不可达（连接超时上限内返回，语义同 TP-05b）
+statement error
+COPY (SELECT 1) TO 'rt_x' (FORMAT nats_rw, url 'nats://127.0.0.1:1', create_stream 'true');
+----
+connect

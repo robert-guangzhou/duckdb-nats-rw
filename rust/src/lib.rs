@@ -4,6 +4,7 @@
 //! 头文件由 cbindgen 生成（`rust/regen-header.sh`），提交入库以保证构建确定性。
 //! 所有进入 Rust 的 FFI 调用都经 `ffi::catch_panic` 包裹，panic 不允许跨 FFI 边界。
 
+mod copyto;
 mod ffi;
 mod scan;
 mod subject_match;
@@ -17,6 +18,9 @@ use scan::{ScanData, ScanParams};
 
 /// Rust 核心版本（编译期取自 Cargo.toml），含结尾 NUL。
 const VERSION_C: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
+
+/// COPY 整批写入的操作级超时上限（单条 publish-ack 超时在 copyto 模块）。
+const COPY_BATCH_TIMEOUT: Duration = Duration::from_secs(300);
 
 /// 进程内共享的 tokio 运行时：DuckDB 线程同步 block_on 使用，
 /// 不与 DuckDB 线程模型混用。
@@ -224,6 +228,70 @@ pub unsafe extern "C" fn nats_rw_scan_payload(
 pub unsafe extern "C" fn nats_rw_scan_free(r: *mut std::ffi::c_void) {
     if !r.is_null() {
         drop(Box::from_raw(r as *mut ScanData));
+    }
+}
+
+/// COPY 写入：把 count 行 (subject, payload) 逐条发布到 JetStream 流并等待 ack。
+/// 返回码：0 成功（*published_out 为成功发布条数）；1 错误或 Rust panic 转译
+/// （*err_out 需 nats_rw_free_cstring 释放）。整批 300s 超时；单条 publish-ack
+/// 超时见 copyto 模块。进程停机后再入返回错误（同 scan 契约，悬垂防护）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_copy_execute(
+    stream: *const c_char,
+    url: *const c_char,
+    subject: *const c_char,
+    create_stream: i32,
+    subjects: *const *const c_char,
+    payloads: *const *const u8,
+    payload_lens: *const u64,
+    count: u64,
+    published_out: *mut u64,
+    err_out: *mut *mut c_char,
+) -> i32 {
+    let run = || -> Result<u64, String> {
+        if SHUTDOWN_DONE.load(Ordering::Acquire) {
+            return Err("nats_rw runtime already shut down (process exiting)".to_string());
+        }
+        let stream = arg_str(stream, "stream")?.to_string();
+        let url = arg_str(url, "url")?.to_string();
+        let subject = arg_str(subject, "subject")?.to_string();
+        if count == 0 {
+            return Ok(0);
+        }
+        let n = count as usize;
+        let mut rows = Vec::with_capacity(n);
+        for i in 0..n {
+            let s = *subjects.add(i);
+            let p = *payloads.add(i);
+            let len = *payload_lens.add(i) as usize;
+            let subject_i = arg_str(s, "row subject")?.to_string();
+            let payload_i = if p.is_null() || len == 0 {
+                Vec::new()
+            } else {
+                std::slice::from_raw_parts(p, len).to_vec()
+            };
+            rows.push(copyto::CopyRow { subject: subject_i, payload: payload_i });
+        }
+        let params = copyto::CopyParams { url, stream, subject, create_stream: create_stream != 0 };
+        runtime().block_on(async move {
+            tokio::time::timeout(COPY_BATCH_TIMEOUT, copyto::copy(params, rows))
+                .await
+                .map_err(|_| format!("copy timed out after {}s", COPY_BATCH_TIMEOUT.as_secs()))?
+        })
+    };
+    match ffi::catch_panic(run) {
+        Ok(published) => {
+            if !published_out.is_null() {
+                *published_out = published;
+            }
+            0
+        }
+        Err(msg) => {
+            if let Ok(c) = CString::new(msg) {
+                *err_out = c.into_raw();
+            }
+            1
+        }
     }
 }
 

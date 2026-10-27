@@ -66,6 +66,23 @@ const uint8_t *nats_rw_scan_payload(const void *r, uintptr_t i, uint64_t *len_ou
 
 void nats_rw_scan_free(void *r);
 
+/**
+ * COPY 写入：把 count 行 (subject, payload) 逐条发布到 JetStream 流并等待 ack。
+ * 返回码：0 成功（*published_out 为成功发布条数）；1 错误或 Rust panic 转译
+ * （*err_out 需 nats_rw_free_cstring 释放）。整批 300s 超时；单条 publish-ack
+ * 超时见 copyto 模块。进程停机后再入返回错误（同 scan 契约，悬垂防护）。
+ */
+int32_t nats_rw_copy_execute(const char *stream,
+                             const char *url,
+                             const char *subject,
+                             int32_t create_stream,
+                             const char *const *subjects,
+                             const uint8_t *const *payloads,
+                             const uint64_t *payload_lens,
+                             uint64_t count,
+                             uint64_t *published_out,
+                             char **err_out);
+
 void nats_rw_free_cstring(char *s);
 
 #ifdef __cplusplus

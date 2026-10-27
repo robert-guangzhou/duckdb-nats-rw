@@ -13,7 +13,9 @@
 #
 # SQL 测试以单进程直跑（官方 runner 多 worker 在 29GB 内存下会 OOM，见计划阶段一记录）。
 set -euo pipefail
-cd "$(dirname "$0")/.."
+# 脚本位于 test/scripts/，仓库根需上溯两级（历史上错写为一层，整跑必败——
+# 2026-10-26 首次端到端执行时暴露，此前两轮均分步执行未触发）
+cd "$(dirname "$0")/../.."
 
 # docker compose exec -T 会吞调用方 stdin——统一切断，保证脚本在非交互/管道下可执行
 exec </dev/null

@@ -74,3 +74,9 @@ query T
 SELECT DISTINCT headers['unit'] FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222') WHERE subject LIKE 'seed.a%' ORDER BY 1;
 ----
 [alpha]
+
+# 设计债#4（detailed-design 九）：end_seq 超过 last_seq 静默截断到快照边界
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', start_seq := 1, end_seq := 999999);
+----
+10
