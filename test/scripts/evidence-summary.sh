@@ -11,6 +11,8 @@ exec </dev/null
 BASE="tmp/test-output"
 if [ $# -ge 1 ]; then
   DIR="$1"
+  # 兼容两种传参：绝对归档名（20261027T155329Z）或已带前缀的路径（tmp/test-output/2026...）
+  DIR="${DIR#"$BASE"/}"  # 去掉可能的前缀，只保留归档名
 else
   DIR=$(ls -t "$BASE" 2>/dev/null | grep -v -- '-chaos$' | grep -v -- '-perf$' | head -1)
 fi
