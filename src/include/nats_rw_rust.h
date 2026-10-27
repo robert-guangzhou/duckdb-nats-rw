@@ -34,6 +34,11 @@ const char *nats_rw_core_version(void);
  */
 int32_t nats_rw_scan_execute(const char *stream,
                              const char *url,
+                             const char *user,
+                             const char *password,
+                             const char *token,
+                             const char *nkey,
+                             const char *creds,
                              const char *subject,
                              uint64_t start_seq,
                              uint64_t end_seq,
@@ -74,6 +79,11 @@ void nats_rw_scan_free(void *r);
  */
 int32_t nats_rw_copy_execute(const char *stream,
                              const char *url,
+                             const char *user,
+                             const char *password,
+                             const char *token,
+                             const char *nkey,
+                             const char *creds,
                              const char *subject,
                              int32_t create_stream,
                              const char *const *subjects,
@@ -82,6 +92,61 @@ int32_t nats_rw_copy_execute(const char *stream,
                              uint64_t count,
                              uint64_t *published_out,
                              char **err_out);
+
+/**
+ * 列出全部流摘要。返回码与内存约定同 scan（0 成功，*out 需 nats_rw_streams_free）。
+ */
+int32_t nats_rw_streams_execute(const char *url,
+                                const char *user,
+                                const char *password,
+                                const char *token,
+                                const char *nkey,
+                                const char *creds,
+                                void **out,
+                                char **err_out);
+
+uintptr_t nats_rw_streams_len(const void *r);
+
+const char *nats_rw_streams_name(const void *r, uintptr_t i);
+
+uint64_t nats_rw_streams_messages(const void *r, uintptr_t i);
+
+uint64_t nats_rw_streams_bytes(const void *r, uintptr_t i);
+
+uint64_t nats_rw_streams_last_seq(const void *r, uintptr_t i);
+
+void nats_rw_streams_free(void *r);
+
+/**
+ * 单流详情。返回码与内存约定同上（*out 需 nats_rw_stream_info_free）。
+ */
+int32_t nats_rw_stream_info_execute(const char *url,
+                                    const char *stream,
+                                    const char *user,
+                                    const char *password,
+                                    const char *token,
+                                    const char *nkey,
+                                    const char *creds,
+                                    void **out,
+                                    char **err_out);
+
+const char *nats_rw_info_name(const void *r);
+
+uint32_t nats_rw_info_subject_count(const void *r);
+
+const char *nats_rw_info_subject(const void *r, uint32_t i);
+
+uint64_t nats_rw_info_messages(const void *r);
+
+uint64_t nats_rw_info_bytes(const void *r);
+
+uint64_t nats_rw_info_first_seq(const void *r);
+
+uint64_t nats_rw_info_last_seq(const void *r);
+
+uint64_t nats_rw_info_consumer_count(const void *r);
+
+void nats_rw_stream_info_free(void *r);
 
 void nats_rw_free_cstring(char *s);
 

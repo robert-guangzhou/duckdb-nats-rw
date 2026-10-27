@@ -15,6 +15,22 @@ services:
     healthcheck:
       test: ["NONE"]
 
+  # TP-04a 认证测试服务：用户名/密码（阶段四）
+  nats_userpass:
+    image: nats:2.11
+    container_name: nats-rw-nats-userpass
+    command: ["--jetstream", "--store_dir", "/data", "--user", "admin", "--pass", "s3cret-pass"]
+    volumes:
+      - nats-userpass-data:/data
+
+  # TP-04b 认证测试服务：单 token（阶段四）
+  nats_token:
+    image: nats:2.11
+    container_name: nats-rw-nats-token
+    command: ["--jetstream", "--store_dir", "/data", "--auth", "tok-12345"]
+    volumes:
+      - nats-token-data:/data
+
   builder:
     build:
       context: ..
@@ -49,5 +65,7 @@ services:
 
 volumes:
   nats-data:
+  nats-userpass-data:
+  nats-token-data:
   cargo-cache:
   cargo-git:

@@ -4,8 +4,10 @@
 //! 头文件由 cbindgen 生成（`rust/regen-header.sh`），提交入库以保证构建确定性。
 //! 所有进入 Rust 的 FFI 调用都经 `ffi::catch_panic` 包裹，panic 不允许跨 FFI 边界。
 
+mod auth;
 mod copyto;
 mod ffi;
+mod meta;
 mod scan;
 mod subject_match;
 
@@ -95,6 +97,11 @@ unsafe fn arg_str<'a>(p: *const c_char, name: &str) -> Result<&'a str, String> {
 pub unsafe extern "C" fn nats_rw_scan_execute(
     stream: *const c_char,
     url: *const c_char,
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
     subject: *const c_char,
     start_seq: u64,
     end_seq: u64,
@@ -111,10 +118,12 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
         }
         let stream = arg_str(stream, "stream")?.to_string();
         let url = arg_str(url, "url")?.to_string();
+        let auth = auth_from_ffi(user, password, token, nkey, creds)?;
         let subject = if subject.is_null() { None } else { Some(arg_str(subject, "subject")?.to_string()) };
         let params = ScanParams {
             stream,
             url,
+            auth,
             subject,
             start_seq,
             end_seq,
@@ -239,6 +248,11 @@ pub unsafe extern "C" fn nats_rw_scan_free(r: *mut std::ffi::c_void) {
 pub unsafe extern "C" fn nats_rw_copy_execute(
     stream: *const c_char,
     url: *const c_char,
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
     subject: *const c_char,
     create_stream: i32,
     subjects: *const *const c_char,
@@ -254,6 +268,7 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
         }
         let stream = arg_str(stream, "stream")?.to_string();
         let url = arg_str(url, "url")?.to_string();
+        let auth = auth_from_ffi(user, password, token, nkey, creds)?;
         let subject = arg_str(subject, "subject")?.to_string();
         if count == 0 {
             return Ok(0);
@@ -272,7 +287,7 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
             };
             rows.push(copyto::CopyRow { subject: subject_i, payload: payload_i });
         }
-        let params = copyto::CopyParams { url, stream, subject, create_stream: create_stream != 0 };
+        let params = copyto::CopyParams { url, stream, auth, subject, create_stream: create_stream != 0 };
         runtime().block_on(async move {
             tokio::time::timeout(COPY_BATCH_TIMEOUT, copyto::copy(params, rows))
                 .await
@@ -292,6 +307,203 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
             }
             1
         }
+    }
+}
+
+/// 5 个可空认证字段 → AuthMethod（FFI 共享约定；null 或空串 = 未设置）。
+unsafe fn auth_from_ffi(
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
+) -> Result<auth::AuthMethod, String> {
+    fn opt<'a>(p: *const c_char, name: &str) -> Result<Option<&'a str>, String> {
+        if p.is_null() {
+            return Ok(None);
+        }
+        // safety: 调用方（同为 unsafe fn）保证指针有效
+        unsafe { Ok(Some(arg_str(p, name)?)) }
+    }
+    auth::AuthMethod::from_fields(
+        opt(user, "user")?,
+        opt(password, "password")?,
+        opt(token, "token")?,
+        opt(nkey, "nkey")?,
+        opt(creds, "creds")?,
+    )
+}
+
+// ---------------------------------------------------------------------------
+// FFI: 元数据（阶段四）
+// ---------------------------------------------------------------------------
+
+/// 列出全部流摘要。返回码与内存约定同 scan（0 成功，*out 需 nats_rw_streams_free）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_execute(
+    url: *const c_char,
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
+    out: *mut *mut std::ffi::c_void,
+    err_out: *mut *mut c_char,
+) -> i32 {
+    let run = || -> Result<Box<meta::StreamsData>, String> {
+        if SHUTDOWN_DONE.load(Ordering::Acquire) {
+            return Err("nats_rw runtime already shut down (process exiting)".to_string());
+        }
+        let url = arg_str(url, "url")?.to_string();
+        let auth = auth_from_ffi(user, password, token, nkey, creds)?;
+        runtime().block_on(meta::list_streams(&url, &auth))
+    };
+    match ffi::catch_panic(run) {
+        Ok(data) => {
+            *out = Box::into_raw(data) as *mut std::ffi::c_void;
+            0
+        }
+        Err(msg) => {
+            if let Ok(c) = CString::new(msg) {
+                *err_out = c.into_raw();
+            }
+            1
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_len(r: *const std::ffi::c_void) -> usize {
+    (r as *const meta::StreamsData).as_ref().map(|d| d.streams.len()).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_name(r: *const std::ffi::c_void, i: usize) -> *const c_char {
+    (r as *const meta::StreamsData)
+        .as_ref()
+        .and_then(|d| d.streams.get(i))
+        .map(|s| s.name.as_ptr())
+        .unwrap_or(std::ptr::null())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_messages(r: *const std::ffi::c_void, i: usize) -> u64 {
+    (r as *const meta::StreamsData)
+        .as_ref()
+        .and_then(|d| d.streams.get(i))
+        .map(|s| s.messages)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_bytes(r: *const std::ffi::c_void, i: usize) -> u64 {
+    (r as *const meta::StreamsData)
+        .as_ref()
+        .and_then(|d| d.streams.get(i))
+        .map(|s| s.bytes)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_last_seq(r: *const std::ffi::c_void, i: usize) -> u64 {
+    (r as *const meta::StreamsData)
+        .as_ref()
+        .and_then(|d| d.streams.get(i))
+        .map(|s| s.last_seq)
+        .unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_streams_free(r: *mut std::ffi::c_void) {
+    if !r.is_null() {
+        drop(Box::from_raw(r as *mut meta::StreamsData));
+    }
+}
+
+/// 单流详情。返回码与内存约定同上（*out 需 nats_rw_stream_info_free）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_stream_info_execute(
+    url: *const c_char,
+    stream: *const c_char,
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
+    out: *mut *mut std::ffi::c_void,
+    err_out: *mut *mut c_char,
+) -> i32 {
+    let run = || -> Result<Box<meta::StreamInfoData>, String> {
+        if SHUTDOWN_DONE.load(Ordering::Acquire) {
+            return Err("nats_rw runtime already shut down (process exiting)".to_string());
+        }
+        let url = arg_str(url, "url")?.to_string();
+        let stream = arg_str(stream, "stream")?.to_string();
+        let auth = auth_from_ffi(user, password, token, nkey, creds)?;
+        runtime().block_on(meta::stream_info(&url, &auth, &stream))
+    };
+    match ffi::catch_panic(run) {
+        Ok(data) => {
+            *out = Box::into_raw(data) as *mut std::ffi::c_void;
+            0
+        }
+        Err(msg) => {
+            if let Ok(c) = CString::new(msg) {
+                *err_out = c.into_raw();
+            }
+            1
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_name(r: *const std::ffi::c_void) -> *const c_char {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.name.as_ptr()).unwrap_or(std::ptr::null())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_subject_count(r: *const std::ffi::c_void) -> u32 {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.subjects.len() as u32).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_subject(r: *const std::ffi::c_void, i: u32) -> *const c_char {
+    (r as *const meta::StreamInfoData)
+        .as_ref()
+        .and_then(|d| d.subjects.get(i as usize))
+        .map(|s| s.as_ptr())
+        .unwrap_or(std::ptr::null())
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_messages(r: *const std::ffi::c_void) -> u64 {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.messages).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_bytes(r: *const std::ffi::c_void) -> u64 {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.bytes).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_first_seq(r: *const std::ffi::c_void) -> u64 {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.first_seq).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_last_seq(r: *const std::ffi::c_void) -> u64 {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.last_seq).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_info_consumer_count(r: *const std::ffi::c_void) -> u64 {
+    (r as *const meta::StreamInfoData).as_ref().map(|d| d.consumer_count).unwrap_or(0)
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_stream_info_free(r: *mut std::ffi::c_void) {
+    if !r.is_null() {
+        drop(Box::from_raw(r as *mut meta::StreamInfoData));
     }
 }
 

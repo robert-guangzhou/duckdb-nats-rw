@@ -39,7 +39,7 @@ esac
 COMPOSE="docker compose -f docker/docker-compose.yml"
 
 echo "[1/6] 起容器 (nats + builder)"
-$COMPOSE up -d nats builder
+$COMPOSE up -d nats nats_userpass nats_token builder
 
 echo "[2/6] 等待 nats healthz (builder 侧探测，最多 60s)"
 $COMPOSE exec -T builder bash -c '

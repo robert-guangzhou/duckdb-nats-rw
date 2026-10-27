@@ -37,6 +37,23 @@ async fn seed(url: &str) -> Result<usize, String> {
     let _ = js.delete_stream("rt_null").await;
     let _ = js.delete_stream("rt_chaos").await;
     let _ = js.delete_stream("perf_stream").await;
+    // 认证服务器（阶段四）：独立连接清理
+    if let Ok(client) = async_nats::ConnectOptions::new()
+        .user_and_password("admin".into(), "s3cret-pass".into())
+        .connect("nats://nats_userpass:4222".to_string())
+        .await
+    {
+        let js_a = async_nats::jetstream::new(client);
+        let _ = js_a.delete_stream("auth_rt").await;
+    }
+    if let Ok(client) = async_nats::ConnectOptions::new()
+        .token("tok-12345".into())
+        .connect("nats://nats_token:4222".to_string())
+        .await
+    {
+        let js_t = async_nats::jetstream::new(client);
+        let _ = js_t.delete_stream("tok_rt").await;
+    }
     js.create_stream(async_nats::jetstream::stream::Config {
         name: "seed_stream".into(),
         subjects: vec!["seed.>".into()],

@@ -1,5 +1,6 @@
 #include "nats_rw_copyto.hpp"
 #include "nats_rw_rust.h"
+#include "nats_rw_secret.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/string_util.hpp"
@@ -19,6 +20,7 @@ namespace duckdb {
 struct NatsRwCopyBindData : public FunctionData {
 	std::string stream;
 	std::string url = "nats://127.0.0.1:4222";
+	std::string user, password, token, nkey, creds;
 	std::string subject;      // 缺省 = 流名
 	bool create_stream = false;
 	bool has_payload_column = false;
@@ -30,6 +32,11 @@ struct NatsRwCopyBindData : public FunctionData {
 		auto ret = make_uniq<NatsRwCopyBindData>();
 		ret->stream = stream;
 		ret->url = url;
+		ret->user = user;
+		ret->password = password;
+		ret->token = token;
+		ret->nkey = nkey;
+		ret->creds = creds;
 		ret->subject = subject;
 		ret->create_stream = create_stream;
 		ret->has_payload_column = has_payload_column;
@@ -42,7 +49,8 @@ struct NatsRwCopyBindData : public FunctionData {
 		auto &other = other_p.Cast<NatsRwCopyBindData>();
 		return stream == other.stream && url == other.url && subject == other.subject &&
 		       create_stream == other.create_stream && has_payload_column == other.has_payload_column &&
-		       payload_column == other.payload_column && names == other.names;
+		       payload_column == other.payload_column && names == other.names && user == other.user &&
+		       password == other.password && token == other.token && nkey == other.nkey && creds == other.creds;
 	}
 };
 
@@ -81,8 +89,12 @@ static unique_ptr<FunctionData> NatsRwCopyBind(ClientContext &context, CopyFunct
 	bind_data->stream = input.info.file_path;
 	bind_data->subject = bind_data->stream;
 
+	std::string secret_param;
 	if (auto url = OptionString(input.info, "url")) {
 		bind_data->url = *url;
+	}
+	if (auto sec = OptionString(input.info, "secret")) {
+		secret_param = *sec;
 	}
 	if (auto subject = OptionString(input.info, "subject_prefix")) {
 		if (subject->empty()) {
@@ -117,6 +129,20 @@ static unique_ptr<FunctionData> NatsRwCopyBind(ClientContext &context, CopyFunct
 
 	for (auto &n : names) {
 		bind_data->names.push_back(static_cast<const std::string &>(n));
+	}
+	// secret 解析（同 scan：显式 url > secret.url > 默认）
+	{
+		auto settings = NatsRwSecret::Lookup(context, secret_param, bind_data->url);
+		if (!settings.secret_name.empty()) {
+			if (bind_data->url == "nats://127.0.0.1:4222" && !settings.url.empty()) {
+				bind_data->url = settings.url;
+			}
+			bind_data->user = settings.user;
+			bind_data->password = settings.password;
+			bind_data->token = settings.token;
+			bind_data->nkey = settings.nkey;
+			bind_data->creds = settings.creds;
+		}
 	}
 	return std::move(bind_data);
 }
@@ -252,6 +278,11 @@ static void BuildRows(FunctionData &bind_data_p, DataChunk &input, std::vector<s
 	}
 }
 
+// 认证字段 → 可空 C 字符串（与 scan.cpp 同约定）
+static const char *NatsRwAuthOrNull2(const std::string &s) {
+	return s.empty() ? nullptr : s.c_str();
+}
+
 static void NatsRwCopySink(ExecutionContext &context, FunctionData &bind_data_p, GlobalFunctionData &gstate_p,
                            LocalFunctionData &lstate, DataChunk &input) {
 	auto &bind_data = bind_data_p.Cast<NatsRwCopyBindData>();
@@ -279,6 +310,9 @@ static void NatsRwCopySink(ExecutionContext &context, FunctionData &bind_data_p,
 	uint64_t published = 0;
 	char *err = nullptr;
 	int32_t rc = nats_rw_copy_execute(bind_data.stream.c_str(), bind_data.url.c_str(),
+	                                  NatsRwAuthOrNull2(bind_data.user), NatsRwAuthOrNull2(bind_data.password),
+	                                  NatsRwAuthOrNull2(bind_data.token), NatsRwAuthOrNull2(bind_data.nkey),
+	                                  NatsRwAuthOrNull2(bind_data.creds),
 	                                  bind_data.subject.c_str(), bind_data.create_stream ? 1 : 0,
 	                                  subject_ptrs.data(), payload_ptrs.data(), payload_lens.data(),
 	                                  static_cast<uint64_t>(subjects.size()), &published, &err);
@@ -303,6 +337,7 @@ void NatsRwCopyFunction::Register(ExtensionLoader &loader) {
 	nats_rw_copy.copy_options = [](ClientContext &context, CopyOptionsInput &input) {
 		auto &opts = input.options;
 		opts["url"] = CopyOption(LogicalType::VARCHAR);
+		opts["secret"] = CopyOption(LogicalType::VARCHAR);
 		opts["subject_prefix"] = CopyOption(LogicalType::VARCHAR);
 		opts["payload_column"] = CopyOption(LogicalType::VARCHAR);
 		opts["create_stream"] = CopyOption(LogicalType::BOOLEAN);

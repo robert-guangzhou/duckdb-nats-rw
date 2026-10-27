@@ -5,20 +5,17 @@
 //! MVP 实现把区间一次性物化进内存（有界快照）；批量/流式优化见计划第七章。
 
 use std::ffi::CString;
-use std::time::Duration;
 
 use async_nats::jetstream::message::StreamMessage;
 use futures_util::StreamExt;
 
+use crate::auth::{connect_authenticated, AuthMethod};
 use crate::subject_match::subject_matches;
-
-/// 连接建立的超时上限（TP-05b：不可达地址必须在有限时间内返回可读错误，
-/// 而非挂到 TCP 重传超时）。计划三章：暂为常量，参数化列入阶段三。
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(crate) struct ScanParams {
     pub(crate) stream: String,
     pub(crate) url: String,
+    pub(crate) auth: AuthMethod,
     pub(crate) subject: Option<String>,
     pub(crate) start_seq: u64,
     /// 0 = 扫描开始时的 last_seq
@@ -70,11 +67,7 @@ fn is_no_responders(err: &str) -> bool {
 }
 
 pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
-    let connect_error = |detail: String| format!("connect to '{}' failed: {detail}", sanitize_url(&p.url));
-    let client = tokio::time::timeout(CONNECT_TIMEOUT, async_nats::connect(p.url.as_str()))
-        .await
-        .map_err(|_| connect_error(format!("timed out after {}s", CONNECT_TIMEOUT.as_secs())))?
-        .map_err(|e| connect_error(e.to_string()))?;
+    let client = connect_authenticated(&p.url, &p.auth).await?;
     let jetstream = async_nats::jetstream::new(client);
     let mut stream = jetstream
         .get_stream(p.stream.clone())

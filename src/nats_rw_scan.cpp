@@ -1,5 +1,6 @@
 #include "nats_rw_scan.hpp"
 #include "nats_rw_rust.h"
+#include "nats_rw_secret.hpp"
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
@@ -23,6 +24,7 @@ static constexpr idx_t COL_PAYLOAD = 5;
 struct NatsRwScanBindData : public TableFunctionData {
 	std::string stream;
 	std::string url = "nats://127.0.0.1:4222";
+	std::string user, password, token, nkey, creds;
 	bool has_subject = false;
 	std::string subject;
 	uint64_t start_seq = 1;
@@ -83,11 +85,14 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 	}
 	bind_data->stream = input.inputs[0].GetValue<std::string>();
 
+	std::string secret_param;
 	for (auto &kv : input.named_parameters) {
 		const auto &key = kv.first;
 		const auto &value = kv.second;
 		if (key == "url") {
 			bind_data->url = value.GetValue<std::string>();
+		} else if (key == "secret") {
+			secret_param = value.GetValue<std::string>();
 		} else if (key == "subject") {
 			bind_data->has_subject = !value.IsNull();
 			bind_data->subject = bind_data->has_subject ? value.GetValue<std::string>() : "";
@@ -117,6 +122,21 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 		}
 	}
 
+	// secret 解析：显式 url 参数 > secret.url > 默认（Dev Plan 3.3）
+	{
+		auto settings = NatsRwSecret::Lookup(context, secret_param, bind_data->url);
+		if (!settings.secret_name.empty()) {
+			if (bind_data->url == "nats://127.0.0.1:4222" && !settings.url.empty()) {
+				bind_data->url = settings.url;
+			}
+			bind_data->user = settings.user;
+			bind_data->password = settings.password;
+			bind_data->token = settings.token;
+			bind_data->nkey = settings.nkey;
+			bind_data->creds = settings.creds;
+		}
+	}
+
 	names.emplace_back("stream");
 	return_types.emplace_back(LogicalType::VARCHAR);
 	names.emplace_back("subject");
@@ -133,6 +153,11 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 	return std::move(bind_data);
 }
 
+// 认证字段 → 可空 C 字符串（FFI 约定：空串 = 未设置）
+static const char *NatsRwAuthOrNull(const std::string &s) {
+	return s.empty() ? nullptr : s.c_str();
+}
+
 static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &context,
                                                                 TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->Cast<NatsRwScanBindData>();
@@ -142,6 +167,9 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 	char *err = nullptr;
 	int32_t rc = nats_rw_scan_execute(
 	    bind_data.stream.c_str(), bind_data.url.c_str(),
+	    NatsRwAuthOrNull(bind_data.user), NatsRwAuthOrNull(bind_data.password),
+	    NatsRwAuthOrNull(bind_data.token), NatsRwAuthOrNull(bind_data.nkey),
+	    NatsRwAuthOrNull(bind_data.creds),
 	    bind_data.has_subject ? bind_data.subject.c_str() : nullptr,
 	    bind_data.start_seq, bind_data.end_seq,
 	    bind_data.has_start_time ? bind_data.start_time_nanos : std::numeric_limits<int64_t>::min(),
@@ -231,6 +259,7 @@ void NatsRwScanFunction::Register(ExtensionLoader &loader) {
 
 	nats_rw_scan.GetSignature().WithTypedKwargs("options", [](TypedKwargs &options) {
 		options.Add("url", LogicalType(LogicalTypeId::VARCHAR));
+		options.Add("secret", LogicalType(LogicalTypeId::VARCHAR));
 		options.Add("subject", LogicalType(LogicalTypeId::VARCHAR));
 		options.Add("start_seq", LogicalType(LogicalTypeId::UBIGINT));
 		options.Add("end_seq", LogicalType(LogicalTypeId::UBIGINT));

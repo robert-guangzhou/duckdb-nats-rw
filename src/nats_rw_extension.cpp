@@ -4,6 +4,8 @@
 #include "nats_rw_rust.h" // cbindgen 生成；变更后运行 rust/regen-header.sh
 #include "nats_rw_scan.hpp"
 #include "nats_rw_copyto.hpp"
+#include "nats_rw_secret.hpp"
+#include "nats_rw_meta.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
@@ -35,6 +37,10 @@ static void LoadInternal(ExtensionLoader &loader) {
 
 	// 写入（TP-03 组）：COPY … TO '<stream>' (FORMAT nats_rw, …)
 	NatsRwCopyFunction::Register(loader);
+
+	// 认证与元数据（TP-04 组，阶段四）
+	NatsRwSecret::Register(loader);
+	NatsRwMetaFunctions::Register(loader);
 }
 
 void NatsRwExtension::Load(ExtensionLoader &loader) {
