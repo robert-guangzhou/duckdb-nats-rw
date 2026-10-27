@@ -79,8 +79,22 @@ corrosion_import_crate(
 
 set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
 
+# FFI 头文件滞后检测（2026-10-27 阶段四事故根治——"头文件没再生"）
+# lib.rs 或 cbindgen.toml 比 nats_rw_rust.h 新 → 编译前 FATAL_ERROR
+# 防止改了 Rust FFI 签名但忘跑 regen-header.sh，到 C++ 编译才报"too many arguments"
+add_custom_target(nats_rw_header_check
+    COMMAND ${CMAKE_COMMAND}
+        -DBASE_DIR=${CMAKE_CURRENT_SOURCE_DIR}
+        -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/check_header_fresh.cmake
+    COMMENT "nats_rw: checking FFI header freshness (lib.rs vs nats_rw_rust.h)"
+    VERBATIM)
+
 build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
+
+# 头文件检测先于扩展编译（两种目标都依赖）
+add_dependencies(${EXTENSION_NAME} nats_rw_header_check)
+add_dependencies(${LOADABLE_EXTENSION_NAME} nats_rw_header_check)
 
 # staticlib 自含 Rust std 与全部依赖：链接进静态与可加载两种目标，产物单文件自足
 target_link_libraries(${EXTENSION_NAME} nats_rw-static)
