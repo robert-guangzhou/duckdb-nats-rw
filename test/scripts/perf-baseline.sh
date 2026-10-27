@@ -45,6 +45,10 @@ echo "== [3/3] 写入 docs/perf-baseline.md =="
   echo "- 复现：test/scripts/perf-baseline.sh（模板 test/perf/*.test）"
 } >> docs/perf-baseline.md
 
-# 回执归档
-$COMPOSE exec -T builder bash -c "cd /workspace && $UNITTEST test/perf/perf-count.test 2>&1" | tail -2 > "$OUT/verify.log"
-echo "完成：docs/perf-baseline.md 已追加 $TS 基线；验证输出 $OUT/verify.log"
+# 回执归档 + 断言（honest-check 红旗修复：验证物必须被读取并判定，不得只写不查）
+$COMPOSE exec -T builder bash -c "cd /workspace && $UNITTEST test/perf/perf-count.test 2>&1" > "$OUT/verify.log"
+if ! grep -q 'All tests passed' "$OUT/verify.log"; then
+  echo "perf-baseline: FAIL——50k 计数验证未通过（见 $OUT/verify.log）" >&2
+  exit 1
+fi
+echo "完成：docs/perf-baseline.md 已追加 $TS 基线；50k 计数验证已确认通过（$OUT/verify.log）"

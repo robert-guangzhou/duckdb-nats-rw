@@ -73,4 +73,6 @@ for t in test/sql/*.test; do
 done
 
 echo "完成，输出已归档: $OUT"
+# 证据摘要（honest-check 红旗修复 2026-10-27）：报告数字的唯一权威来源
+bash test/scripts/evidence-summary.sh "$OUT" | tee "$OUT/summary-echo.log"
 echo "提醒：若本次为 TESTBUILD=debug，按主计划 8.1 政策用后删除 build/debug。"

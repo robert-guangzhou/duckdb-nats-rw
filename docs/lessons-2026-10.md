@@ -83,6 +83,7 @@
 - F2 回归测试、F8 单测锚定、中文/BLOB round-trip 测试
 - seeder 幂等清理（含全部测试流）
 - API 预检流程（docs.rs/头文件先读）——本清单将其从习惯升格为规则 L1/L2
+- evidence-summary.sh + run-all 自动产出（2026-10-27 honest-check 红旗修复）：报告计数只能引用归档生成的 summary.md，禁止手工求和
 
 ## 统计口径
 
