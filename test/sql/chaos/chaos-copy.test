@@ -1,0 +1,10 @@
+# name: test/sql/chaos-copy.test
+# description: CG-HA-1 - 大批量 COPY 供宿主机脚本中途杀 nats（期望：进程报错退出）
+# group: [chaos]
+# 编排：仅由 test/scripts/chaos-check.sh 驱动，不进 run-all 常规套件
+require nats_rw
+
+statement error
+COPY (SELECT i FROM range(100000) t(i)) TO 'rt_chaos' (FORMAT nats_rw, url 'nats://nats:4222', create_stream 'true');
+----
+

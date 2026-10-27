@@ -1,0 +1,10 @@
+# name: test/perf/perf-count.test
+# description: CG-P1-1 性能基线——50k 行全量扫描（计时由 perf-baseline.sh 外层包裹）
+# group: [perf]
+require nats_rw
+
+query I
+SELECT count(*) FROM nats_rw_scan('perf_stream', url := 'nats://nats:4222');
+----
+50000
+

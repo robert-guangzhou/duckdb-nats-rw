@@ -1,0 +1,11 @@
+# name: test/sql/chaos-verify.test
+# description: CG-HA-1 验证 - 杀机后部分消息已发布（1..99999，排除 0 与全部两种竞态）
+# group: [chaos]
+# 编排：仅由 chaos-check.sh 驱动；脚本 grep '1..2999' 判定通过
+require nats_rw
+
+query I
+SELECT count(*) BETWEEN 1 AND 99999 FROM nats_rw_scan('rt_chaos', url := 'nats://nats:4222');
+----
+1
+

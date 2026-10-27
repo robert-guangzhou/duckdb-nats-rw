@@ -59,6 +59,21 @@ static void ThrowRustError(const char *err) {
 	throw InvalidInputException("nats_rw: %s", msg);
 }
 
+// 微秒→纳秒换算，超界钳位（审查 F6 实证：2262 年后溢出 i64 使过滤失效，
+// CG-P1-4b 用 2999 年抓出）。钳到边界保持过滤语义（过早时间=排除一切更晚，
+// 过晚时间=包含一切更早）；避开 i64::MIN（FFI 的"未设置"哨兵）。
+static int64_t MicrosToNanosClamped(int64_t micros) {
+	constexpr int64_t kMaxMicros = std::numeric_limits<int64_t>::max() / 1000;
+	constexpr int64_t kMinMicros = (std::numeric_limits<int64_t>::min() / 1000) + 1;
+	if (micros > kMaxMicros) {
+		return std::numeric_limits<int64_t>::max();
+	}
+	if (micros < kMinMicros) {
+		return std::numeric_limits<int64_t>::min() + 1;
+	}
+	return micros * 1000;
+}
+
 static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunctionBindInput &input,
                                                vector<LogicalType> &return_types, vector<Identifier> &names) {
 	auto bind_data = make_uniq<NatsRwScanBindData>();
@@ -86,12 +101,12 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 		} else if (key == "start_time") {
 			bind_data->has_start_time = !value.IsNull();
 			if (bind_data->has_start_time) {
-				bind_data->start_time_nanos = value.GetValue<timestamp_t>().value * 1000;
+				bind_data->start_time_nanos = MicrosToNanosClamped(value.GetValue<timestamp_t>().value);
 			}
 		} else if (key == "end_time") {
 			bind_data->has_end_time = !value.IsNull();
 			if (bind_data->has_end_time) {
-				bind_data->end_time_nanos = value.GetValue<timestamp_t>().value * 1000;
+				bind_data->end_time_nanos = MicrosToNanosClamped(value.GetValue<timestamp_t>().value);
 			}
 		} else if (key == "batch_size") {
 			auto batch = value.GetValue<uint64_t>();

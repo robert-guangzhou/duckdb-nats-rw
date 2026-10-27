@@ -1,0 +1,9 @@
+# name: test/perf/perf-copy.test
+# description: CG-P1-1 性能基线——50k 行 COPY（计时由 perf-baseline.sh 外层包裹）
+# group: [perf]
+require nats_rw
+
+statement ok
+COPY (SELECT i, 'payload-' || CAST(i AS VARCHAR) FROM range(50000) t(i))
+TO 'perf_stream' (FORMAT nats_rw, url 'nats://nats:4222', create_stream 'true');
+

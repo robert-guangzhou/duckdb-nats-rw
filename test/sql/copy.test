@@ -98,3 +98,57 @@ query I
 SELECT count(*) FROM nats_rw_scan('rt_guard', url := 'nats://nats:4222');
 ----
 2
+
+# ===== 覆盖面审查补测（CG 组，2026-10-27，先落盘未运行） =====
+
+# CG-P0-1：多 chunk 写入（5000 行 > STANDARD_VECTOR_SIZE 2048，sink 至少 3 次调用）；
+# 此前 rt_stream 已有 1001 条（1 + 1000），追加后精确对账 6001
+statement ok
+COPY (SELECT i FROM range(5000) t(i)) TO 'rt_stream' (FORMAT nats_rw, url 'nats://nats:4222');
+
+query III
+SELECT count(*), min(seq), max(seq) FROM nats_rw_scan('rt_stream', url := 'nats://nats:4222');
+----
+6001	1	6001
+
+# CG-P0-2：整行 JSON 多类型序列化——时间戳（F3 防回归：值不得带 SQL 引号）、
+# 整数、布尔、NULL 字段；decode(payload) 取回 VARCHAR 后精确比对
+statement ok
+COPY (SELECT TIMESTAMP '2026-01-02 03:04:05' AS ts, 42 AS n, true AS b, NULL AS x)
+TO 'rt_json' (FORMAT nats_rw, url 'nats://nats:4222', create_stream 'true');
+
+query T
+SELECT decode(payload) FROM nats_rw_scan('rt_json', url := 'nats://nats:4222');
+----
+{"ts":"2026-01-02 03:04:05","n":42,"b":true,"x":null}
+
+# CG-P1-3a：payload_column 为 NULL → 空载荷（非报错、非 "null" 字符串）
+statement ok
+COPY (SELECT NULL::VARCHAR AS v) TO 'rt_null' (FORMAT nats_rw, url 'nats://nats:4222', payload_column 'v', create_stream 'true');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_null', url := 'nats://nats:4222') WHERE octet_length(payload) = 0;
+----
+1
+
+# CG-P2-8a：0 行 COPY（F11 行为锚定：成功且不产生消息）
+statement ok
+COPY (SELECT 1 AS v WHERE false) TO 'rt_null' (FORMAT nats_rw, url 'nats://nats:4222');
+
+query I
+SELECT count(*) FROM nats_rw_scan('rt_null', url := 'nats://nats:4222');
+----
+1
+
+# CG-P2-8b：非法流名（空格）→ 服务端拒绝（错误文本首轮运行校准后收紧；
+# 当前用空模式=任意错误）
+statement error
+COPY (SELECT 1 AS v) TO 'bad stream!' (FORMAT nats_rw, url 'nats://nats:4222', create_stream 'true');
+----
+stream name cannot contain
+
+# CG-P2-7：超服务端 max_payload（默认 1MB）→ 可读报错（错误文本首轮校准）
+statement error
+COPY (SELECT repeat('a', 1100000) AS v) TO 'rt_big' (FORMAT nats_rw, url 'nats://nats:4222', payload_column 'v', create_stream 'true');
+----
+max payload size exceeded

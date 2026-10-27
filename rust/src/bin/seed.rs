@@ -26,11 +26,17 @@ async fn seed(url: &str) -> Result<usize, String> {
     // 幂等：先删旧流（不存在则忽略），再按固定配置重建，保证 seq 从 1 开始。
     // 同步清理 COPY 测试用的 rt_* 流（copy.test 依赖全新流状态）
     let _ = js.delete_stream("seed_stream").await;
+    let _ = js.delete_stream("seed_gapped").await;
+    let _ = js.delete_stream("seed_nodirect").await;
     let _ = js.delete_stream("rt_stream").await;
     let _ = js.delete_stream("rt_pc").await;
     let _ = js.delete_stream("rt_sub").await;
     let _ = js.delete_stream("rt_rt").await;
     let _ = js.delete_stream("rt_guard").await;
+    let _ = js.delete_stream("rt_json").await;
+    let _ = js.delete_stream("rt_null").await;
+    let _ = js.delete_stream("rt_chaos").await;
+    let _ = js.delete_stream("perf_stream").await;
     js.create_stream(async_nats::jetstream::stream::Config {
         name: "seed_stream".into(),
         subjects: vec!["seed.>".into()],
@@ -39,6 +45,45 @@ async fn seed(url: &str) -> Result<usize, String> {
     })
     .await
     .map_err(|e| format!("create_stream failed: {e}"))?;
+
+    // CG-HA-2：seed_gapped——发布 12 条后删除 seq=3、7，行使 scan 的跳过路径。
+    // subjects 须与 seed_stream 的 seed.> 不相交（NATS 拒绝重叠过滤器，实测 400/10065）
+    js.create_stream(async_nats::jetstream::stream::Config {
+        name: "seed_gapped".into(),
+        subjects: vec!["gapseed.>".into()],
+        allow_direct: true,
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("create_stream seed_gapped failed: {e}"))?;
+    for i in 1..=12u32 {
+        let subject = format!("gapseed.{i}");
+        let payload = format!("gap-{i}");
+        js.publish(subject, payload.into()).await
+            .map_err(|e| format!("gap publish failed: {e}"))?
+            .await
+            .map_err(|e| format!("gap ack failed: {e}"))?;
+    }
+    let gapped = js.get_stream("seed_gapped").await.map_err(|e| e.to_string())?;
+    for seq in [3u64, 7] {
+        gapped.delete_message(seq).await.map_err(|e| format!("delete seq {seq} failed: {e}"))?;
+    }
+
+    // CG-HA-4：seed_nodirect——不开 allow_direct，行使 get_raw_message 回退路径
+    js.create_stream(async_nats::jetstream::stream::Config {
+        name: "seed_nodirect".into(),
+        subjects: vec!["ndseed.>".into()],
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("create_stream seed_nodirect failed: {e}"))?;
+    for i in 1..=5u32 {
+        let subject = format!("ndseed.{i}");
+        js.publish(subject, format!("nd-{i}").into()).await
+            .map_err(|e| format!("nd publish failed: {e}"))?
+            .await
+            .map_err(|e| format!("nd ack failed: {e}"))?;
+    }
 
     let mut count = 0usize;
     for (prefix, unit) in [("a", "alpha"), ("b", "beta")] {

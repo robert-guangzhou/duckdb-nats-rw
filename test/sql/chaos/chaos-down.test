@@ -1,0 +1,9 @@
+# name: test/sql/chaos-down.test
+# description: CG-HA-3 - server 停机时扫描报可读错误（非挂起）；由 chaos-check.sh 在停机窗口执行
+# group: [chaos]
+require nats_rw
+
+statement error
+SELECT count(*) FROM nats_rw_scan('seed_stream', url 'nats://nats:4222');
+----
+

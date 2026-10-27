@@ -80,3 +80,78 @@ query I
 SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', start_seq := 1, end_seq := 999999);
 ----
 10
+
+# ===== 覆盖面审查补测（CG 组，2026-10-27，先落盘未运行） =====
+
+# CG-P1-4a：时间过滤排除性——end_time 早于消息时间 → 0 行（真过滤而非恒真）
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222',
+    end_time := TIMESTAMPTZ '2000-01-01 00:00:00+00');
+----
+0
+
+# CG-P1-4b：start_time 晚于消息时间 → 0 行
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222',
+    start_time := TIMESTAMPTZ '2999-01-01 00:00:00+00');
+----
+0
+
+# CG-P1-5a：batch_size=1（极小并发）结果不变
+query III
+SELECT count(*), min(seq), max(seq) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', batch_size := 1);
+----
+10	1	10
+
+# CG-P1-5b：batch_size=256（上限）结果不变
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222', batch_size := 256);
+----
+10
+
+# CG-P2-6a：输出 schema 钉死（列名/类型漂移即失败）
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222')) ORDER BY column_name;
+----
+headers	MAP(VARCHAR, VARCHAR[])
+payload	BLOB
+seq	UBIGINT
+stream	VARCHAR
+subject	VARCHAR
+ts_nats	TIMESTAMP WITH TIME ZONE
+
+# CG-P2-6b：stream 列取值正确
+query T
+SELECT DISTINCT stream FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222');
+----
+seed_stream
+
+# CG-P2-6c：ts_nats 值下界（种子发布于 2026 年，非仅"非空"）
+query I
+SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222') WHERE ts_nats < TIMESTAMPTZ '2026-01-01 00:00:00+00';
+----
+0
+
+# CG-HA-4：显式回退路径——无 allow_direct 的流走 get_raw_message（此前仅隐式覆盖）
+query III
+SELECT count(*), min(seq), max(seq) FROM nats_rw_scan('seed_nodirect', url := 'nats://nats:4222');
+----
+5	1	5
+
+# CG-HA-2：已删除序列的跳过路径——seed_gapped 发布 12 条后删除 seq=3、7
+query III
+SELECT count(*), min(seq), max(seq) FROM nats_rw_scan('seed_gapped', url := 'nats://nats:4222');
+----
+10	1	12
+
+query II
+SELECT min(seq), max(seq) FROM nats_rw_scan('seed_gapped', url := 'nats://nats:4222') WHERE seq IN (3, 7);
+----
+NULL	NULL
+
+# 并发冒烟：同查询内两路扫描（共享 runtime 双 block_on）
+query I
+SELECT (SELECT count(*) FROM nats_rw_scan('seed_stream', url := 'nats://nats:4222'))
+     + (SELECT count(*) FROM nats_rw_scan('seed_gapped', url := 'nats://nats:4222'));
+----
+20
