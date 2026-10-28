@@ -62,6 +62,71 @@ CREATE SECRET my_nats (
     SCOPE 'nats://server');
 ```
 
+#### Authentication options (pick one)
+
+| Option | Description |
+|--------|-------------|
+| `USER` + `PASSWORD` | Username and password authentication |
+| `TOKEN` | Single-token authentication |
+| `NKEY` | NKey seed authentication |
+| `CREDS` | Path to credentials file (JWT + seed) |
+
+#### Using the secret
+
+Once created, the secret can be used in three ways (all verified by `test/sql/secret-usage.test`):
+
+**Way 1 — Explicit reference** (most explicit):
+
+```sql
+SELECT * FROM nats_rw_scan('my_stream',
+    url := 'nats://server:4222',
+    secret := 'my_nats');
+```
+
+**Way 2 — Scope auto-match** (no `secret` parameter needed):
+
+If the secret's `SCOPE` matches the URL prefix, it's found automatically:
+
+```sql
+-- Secret was created with SCOPE 'nats://server'
+-- No secret := needed — scope matches the url
+SELECT * FROM nats_rw_scan('my_stream', url := 'nats://server:4222');
+```
+
+**Way 3 — Secret provides the URL** (omit `url` entirely):
+
+If the secret has a `URL` option, it's used when you don't pass an explicit `url`:
+
+```sql
+-- URL comes from the secret, no url := needed
+SELECT * FROM nats_rw_scan('my_stream', secret := 'my_nats');
+```
+
+#### Priority rules
+
+- Explicit `url` parameter > secret's `URL` > default `nats://127.0.0.1:4222`
+- Explicit `secret := 'name'` > scope-based auto-match
+- Sensitive fields (`PASSWORD`, `TOKEN`, `NKEY`, `CREDS`) are redacted as `***` in `duckdb_secrets()`
+
+#### COPY with secrets
+
+```sql
+-- Explicit secret reference
+COPY (SELECT * FROM metrics) TO 'telemetry'
+  (FORMAT nats_rw, secret 'my_nats', payload_column 'value', create_stream 'true');
+
+-- Or scope auto-match (no secret option needed)
+COPY (SELECT * FROM metrics) TO 'telemetry'
+  (FORMAT nats_rw, url 'nats://server:4222', payload_column 'value');
+```
+
+#### Metadata with secrets
+
+```sql
+SELECT * FROM nats_rw_streams('', secret := 'my_nats');
+SELECT * FROM nats_rw_stream_info('telemetry', secret := 'my_nats');
+```
+
 ## Limitations
 
 - COPY is **not atomic** — mid-batch failures leave partial data (JetStream at-least-once semantics)
