@@ -21,7 +21,7 @@ struct NatsRwCopyBindData : public FunctionData {
 	std::string stream;
 	std::string url = "nats://127.0.0.1:4222";
 	std::string user, password, token, nkey, creds;
-	std::string subject;      // 缺省 = 流名
+	std::string subject; // 缺省 = 流名
 	bool create_stream = false;
 	bool has_payload_column = false;
 	std::string payload_column;
@@ -80,8 +80,7 @@ static std::optional<std::string> OptionString(const CopyInfo &info, const std::
 }
 
 static unique_ptr<FunctionData> NatsRwCopyBind(ClientContext &context, CopyFunctionBindInput &input,
-                                               const vector<Identifier> &names,
-                                               const vector<LogicalType> &sql_types) {
+                                               const vector<Identifier> &names, const vector<LogicalType> &sql_types) {
 	if (input.info.file_path.empty()) {
 		throw BinderException("nats_rw COPY: target stream name is required (COPY ... TO '<stream>')");
 	}
@@ -113,7 +112,8 @@ static unique_ptr<FunctionData> NatsRwCopyBind(ClientContext &context, CopyFunct
 			}
 		}
 		if (!found) {
-			throw BinderException("nats_rw COPY: payload_column '%s' not found in source columns", bind_data->payload_column);
+			throw BinderException("nats_rw COPY: payload_column '%s' not found in source columns",
+			                      bind_data->payload_column);
 		}
 	}
 	if (auto cs = OptionString(input.info, "create_stream")) {
@@ -312,10 +312,9 @@ static void NatsRwCopySink(ExecutionContext &context, FunctionData &bind_data_p,
 	int32_t rc = nats_rw_copy_execute(bind_data.stream.c_str(), bind_data.url.c_str(),
 	                                  NatsRwAuthOrNull2(bind_data.user), NatsRwAuthOrNull2(bind_data.password),
 	                                  NatsRwAuthOrNull2(bind_data.token), NatsRwAuthOrNull2(bind_data.nkey),
-	                                  NatsRwAuthOrNull2(bind_data.creds),
-	                                  bind_data.subject.c_str(), bind_data.create_stream ? 1 : 0,
-	                                  subject_ptrs.data(), payload_ptrs.data(), payload_lens.data(),
-	                                  static_cast<uint64_t>(subjects.size()), &published, &err);
+	                                  NatsRwAuthOrNull2(bind_data.creds), bind_data.subject.c_str(),
+	                                  bind_data.create_stream ? 1 : 0, subject_ptrs.data(), payload_ptrs.data(),
+	                                  payload_lens.data(), static_cast<uint64_t>(subjects.size()), &published, &err);
 	if (rc != 0 && err != nullptr) {
 		std::string msg = err;
 		nats_rw_free_cstring(err);

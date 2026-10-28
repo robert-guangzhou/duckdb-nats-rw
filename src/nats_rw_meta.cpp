@@ -21,7 +21,7 @@ struct NatsRwResolved {
 };
 
 static NatsRwResolved ResolveConnection(ClientContext &context, const std::string &url_param,
-                                         const std::string &secret_param) {
+                                        const std::string &secret_param) {
 	NatsRwResolved resolved;
 	resolved.url = url_param.empty() ? "nats://127.0.0.1:4222" : url_param;
 	// 先用参数 url 或默认值做 scope 匹配；若命中 secret 且其带 url 且未显式传 url，则用 secret.url
@@ -67,8 +67,8 @@ struct NatsRwStreamsBindData : public TableFunctionData {
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<NatsRwStreamsBindData>();
-		return url == other.url && user == other.user && password == other.password &&
-		       token == other.token && nkey == other.nkey && creds == other.creds;
+		return url == other.url && user == other.user && password == other.password && token == other.token &&
+		       nkey == other.nkey && creds == other.creds;
 	}
 };
 
@@ -117,9 +117,9 @@ static unique_ptr<GlobalTableFunctionState> NatsRwStreamsInitGlobal(ClientContex
 	auto state = make_uniq<NatsRwStreamsGlobal>();
 	void *raw = nullptr;
 	char *err = nullptr;
-	int32_t rc = nats_rw_streams_execute(
-	    bind_data.url.c_str(), OrNull(bind_data.user), OrNull(bind_data.password), OrNull(bind_data.token),
-	    OrNull(bind_data.nkey), OrNull(bind_data.creds), &raw, &err);
+	int32_t rc =
+	    nats_rw_streams_execute(bind_data.url.c_str(), OrNull(bind_data.user), OrNull(bind_data.password),
+		                        OrNull(bind_data.token), OrNull(bind_data.nkey), OrNull(bind_data.creds), &raw, &err);
 	if (rc != 0) {
 		if (rc == 1 && err != nullptr) {
 			ThrowRustErrorMeta(err);
@@ -181,8 +181,8 @@ struct NatsRwInfoBindData : public TableFunctionData {
 	}
 	bool Equals(const FunctionData &other_p) const override {
 		auto &other = other_p.Cast<NatsRwInfoBindData>();
-		return stream == other.stream && url == other.url && token == other.token &&
-		       user == other.user && password == other.password && nkey == other.nkey && creds == other.creds;
+		return stream == other.stream && url == other.url && token == other.token && user == other.user &&
+		       password == other.password && nkey == other.nkey && creds == other.creds;
 	}
 };
 
@@ -242,9 +242,9 @@ static unique_ptr<GlobalTableFunctionState> NatsRwInfoInitGlobal(ClientContext &
 	auto state = make_uniq<NatsRwInfoGlobal>();
 	void *raw = nullptr;
 	char *err = nullptr;
-	int32_t rc = nats_rw_stream_info_execute(
-	    bind_data.url.c_str(), bind_data.stream.c_str(), OrNull(bind_data.user), OrNull(bind_data.password),
-	    OrNull(bind_data.token), OrNull(bind_data.nkey), OrNull(bind_data.creds), &raw, &err);
+	int32_t rc = nats_rw_stream_info_execute(bind_data.url.c_str(), bind_data.stream.c_str(), OrNull(bind_data.user),
+	                                         OrNull(bind_data.password), OrNull(bind_data.token),
+	                                         OrNull(bind_data.nkey), OrNull(bind_data.creds), &raw, &err);
 	if (rc != 0) {
 		if (rc == 1 && err != nullptr) {
 			ThrowRustErrorMeta(err);
@@ -267,8 +267,7 @@ static unique_ptr<GlobalTableFunctionState> NatsRwInfoInitGlobal(ClientContext &
 	return std::move(state);
 }
 
-static unique_ptr<LocalTableFunctionState> NatsRwInfoInitLocal(ExecutionContext &context,
-                                                               TableFunctionInitInput &input,
+static unique_ptr<LocalTableFunctionState> NatsRwInfoInitLocal(ExecutionContext &context, TableFunctionInitInput &input,
                                                                GlobalTableFunctionState *global_state) {
 	return nullptr;
 }

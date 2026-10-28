@@ -89,7 +89,7 @@ static bool IsScopeEnd(const string &url, idx_t pos) {
 
 // 与 URL scope 最佳匹配的 secret；无 scope 或空 scope 匹配一切（最弱优先）
 static unique_ptr<SecretEntry> LookupScopedSecret(SecretManager &secret_manager, CatalogTransaction transaction,
-                                                   const string &url) {
+                                                  const string &url) {
 	int64_t best_score = -1;
 	string best_scope;
 	for (auto &entry : secret_manager.AllSecrets(transaction)) {
@@ -118,8 +118,7 @@ static unique_ptr<SecretEntry> LookupScopedSecret(SecretManager &secret_manager,
 	return match.HasMatch() ? std::move(match.secret_entry) : nullptr;
 }
 
-NatsRwSecret::Settings NatsRwSecret::Lookup(ClientContext &context, const std::string &name,
-                                             const std::string &url) {
+NatsRwSecret::Settings NatsRwSecret::Lookup(ClientContext &context, const std::string &name, const std::string &url) {
 	Settings settings;
 	auto &secret_manager = SecretManager::Get(context);
 	auto transaction = CatalogTransaction::GetSystemCatalogTransaction(context);

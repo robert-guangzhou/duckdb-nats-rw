@@ -159,22 +159,20 @@ static const char *NatsRwAuthOrNull(const std::string &s) {
 }
 
 static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &context,
-                                                                TableFunctionInitInput &input) {
+                                                                 TableFunctionInitInput &input) {
 	auto &bind_data = input.bind_data->Cast<NatsRwScanBindData>();
 	auto state = make_uniq<NatsRwScanGlobalState>();
 
 	void *raw = nullptr;
 	char *err = nullptr;
 	int32_t rc = nats_rw_scan_execute(
-	    bind_data.stream.c_str(), bind_data.url.c_str(),
-	    NatsRwAuthOrNull(bind_data.user), NatsRwAuthOrNull(bind_data.password),
-	    NatsRwAuthOrNull(bind_data.token), NatsRwAuthOrNull(bind_data.nkey),
-	    NatsRwAuthOrNull(bind_data.creds),
-	    bind_data.has_subject ? bind_data.subject.c_str() : nullptr,
+	    bind_data.stream.c_str(), bind_data.url.c_str(), NatsRwAuthOrNull(bind_data.user),
+	    NatsRwAuthOrNull(bind_data.password), NatsRwAuthOrNull(bind_data.token), NatsRwAuthOrNull(bind_data.nkey),
+	    NatsRwAuthOrNull(bind_data.creds), bind_data.has_subject ? bind_data.subject.c_str() : nullptr,
 	    bind_data.start_seq, bind_data.end_seq,
 	    bind_data.has_start_time ? bind_data.start_time_nanos : std::numeric_limits<int64_t>::min(),
-	    bind_data.has_end_time ? bind_data.end_time_nanos : std::numeric_limits<int64_t>::min(),
-	    bind_data.concurrency, &raw, &err);
+	    bind_data.has_end_time ? bind_data.end_time_nanos : std::numeric_limits<int64_t>::min(), bind_data.concurrency,
+	    &raw, &err);
 	if (rc != 0) {
 		if (rc == 1 && err != nullptr) {
 			ThrowRustError(err);
@@ -207,9 +205,8 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 	return std::move(state);
 }
 
-static unique_ptr<LocalTableFunctionState> NatsRwScanInitLocal(ExecutionContext &context,
-                                                              TableFunctionInitInput &input,
-                                                              GlobalTableFunctionState *global_state) {
+static unique_ptr<LocalTableFunctionState> NatsRwScanInitLocal(ExecutionContext &context, TableFunctionInitInput &input,
+                                                               GlobalTableFunctionState *global_state) {
 	return nullptr;
 }
 

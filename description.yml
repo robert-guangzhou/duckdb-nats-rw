@@ -1,0 +1,37 @@
+extension:
+  name: nats_rw
+  description: Read and write NATS JetStream streams with SQL
+  version: 0.1.0
+  language: C++
+  build: cmake
+  license: MIT
+  excluded_platforms: "linux_amd64_musl;wasm_mvp;wasm_eh;wasm_threads;windows_amd64_mingw;windows_amd64_rtools"
+  maintainers:
+    - robert-guangzhou
+
+repo:
+  github: robert-guangzhou/duckdb-nats-rw
+  ref: main
+  requires_toolchains: rust
+
+docs:
+  hello_world: |
+    -- Write query results to a NATS JetStream stream
+    COPY (SELECT 'hello' AS v) TO 'my_stream'
+      (FORMAT nats_rw, url 'nats://localhost:4222', create_stream 'true');
+
+    -- Read it back
+    SELECT * FROM nats_rw_scan('my_stream', url := 'nats://localhost:4222');
+
+  extended_description: |
+    The nats_rw extension provides bidirectional NATS JetStream access from DuckDB:
+
+    - **Read**: `nats_rw_scan()` table function — bounded snapshot scan with
+      subject filtering, sequence/time ranges, and header extraction
+    - **Write**: `COPY … TO '<stream>' (FORMAT nats_rw)` — publish query results
+      with optional payload_column, subject_prefix, and auto stream creation
+    - **Auth**: `CREATE SECRET (TYPE nats_rw, …)` — user/password, token, nkey,
+      or credentials file, with scope-based auto-matching
+    - **Metadata**: `nats_rw_streams()` and `nats_rw_stream_info()` for inspection
+
+    Documentation: https://github.com/robert-guangzhou/duckdb-nats-rw

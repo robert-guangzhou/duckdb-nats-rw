@@ -13,7 +13,7 @@ public:
 	// 解析后的连接设置（secret 名 + 认证字段 + 可选 URL 覆盖）
 	struct Settings {
 		std::string secret_name;
-		std::string url;      // secret 携带的 URL（可为空）
+		std::string url; // secret 携带的 URL（可为空）
 		std::string user;
 		std::string password;
 		std::string token;
