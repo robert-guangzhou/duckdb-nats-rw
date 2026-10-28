@@ -128,13 +128,18 @@ SELECT * FROM nats_rw_streams('', secret := 'my_nats');
 SELECT * FROM nats_rw_stream_info('telemetry', secret := 'my_nats');
 ```
 
+## Performance
+
+- **Connection pooling**: Connections are cached per `(url, auth)` — repeated queries to the same server reuse a single NATS connection
+- **Predicate pushdown**: `WHERE seq BETWEEN 3 AND 5` automatically narrows the scan range (no full-stream fetch)
+- `json_extract` fields are parsed in the extension core (serde_json), adding columns without a separate JSON extension
+
 ## Limitations
 
 - COPY is **not atomic** — mid-batch failures leave partial data (JetStream at-least-once semantics)
-- Subject filtering is client-side (full stream is fetched then filtered)
-- Each query creates a new connection (no connection pooling)
+- Subject filtering is client-side (seq/time predicates are pushed down automatically)
 - Publish is serial per-message ack (no pipelining)
-- Predicate pushdown not yet implemented
+
 
 ## License
 

@@ -2,7 +2,8 @@
 
 use std::ffi::CString;
 
-use crate::auth::{connect_authenticated, AuthMethod};
+use crate::auth::AuthMethod;
+use crate::conn_cache::connect_cached;
 
 pub(crate) struct StreamSummary {
     pub(crate) name: CString,
@@ -31,8 +32,8 @@ fn to_cstring(s: &str) -> Result<CString, String> {
 
 /// 全部流摘要。stream_names 为惰性迭代器，逐名取 info（N 小时合理；大集群分页列阶段五）。
 pub(crate) async fn list_streams(url: &str, auth: &AuthMethod) -> Result<Box<StreamsData>, String> {
-    let client = connect_authenticated(url, auth).await?;
-    let js = async_nats::jetstream::new(client);
+    let client = connect_cached(url, auth).await?;
+    let js = async_nats::jetstream::new((*client).clone());
     let mut summaries = Vec::new();
     let mut names = js.stream_names();
     while let Some(name) = names.next().await {
@@ -62,8 +63,8 @@ pub(crate) async fn stream_info(
     auth: &AuthMethod,
     stream_name: &str,
 ) -> Result<Box<StreamInfoData>, String> {
-    let client = connect_authenticated(url, auth).await?;
-    let js = async_nats::jetstream::new(client);
+    let client = connect_cached(url, auth).await?;
+    let js = async_nats::jetstream::new((*client).clone());
     let mut stream = js
         .get_stream(stream_name.to_string())
         .await

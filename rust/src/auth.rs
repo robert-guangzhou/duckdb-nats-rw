@@ -6,7 +6,7 @@ use std::time::Duration;
 /// 连接建立的超时上限（阶段二引入，阶段四移至共享模块）。
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-#[derive(Debug, Clone, PartialEq, Eq, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
 pub(crate) enum AuthMethod {
     #[default]
     None,

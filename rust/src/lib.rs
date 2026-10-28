@@ -5,6 +5,7 @@
 //! 所有进入 Rust 的 FFI 调用都经 `ffi::catch_panic` 包裹，panic 不允许跨 FFI 边界。
 
 mod auth;
+mod conn_cache;
 mod copyto;
 mod ffi;
 mod meta;

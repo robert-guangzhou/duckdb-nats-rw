@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use async_nats::jetstream::stream::Config;
 
-use crate::auth::{connect_authenticated, AuthMethod};
+use crate::auth::AuthMethod;
+use crate::conn_cache::connect_cached;
 
 pub(crate) struct CopyRow {
     pub(crate) subject: String,
@@ -32,8 +33,8 @@ pub(crate) struct CopyParams {
 const PER_MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) async fn copy(p: CopyParams, rows: Vec<CopyRow>) -> Result<u64, String> {
-    let client = connect_authenticated(&p.url, &p.auth).await?;
-    let js = async_nats::jetstream::new(client);
+    let client = connect_cached(&p.url, &p.auth).await?;
+    let js = async_nats::jetstream::new((*client).clone());
 
     // 建流或校验流存在。流已存在时原样使用——绝不改写其 subject 过滤器
     // （审查 F2：create_or_update 会静默覆盖既有过滤器，已写消息可能失捕）。

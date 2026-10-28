@@ -4,8 +4,14 @@
 
 #include "duckdb/common/exception.hpp"
 #include "duckdb/common/types/value.hpp"
+#include "duckdb/execution/expression_executor.hpp"
 #include "duckdb/function/table_function.hpp"
 #include "duckdb/parser/parsed_data/create_table_function_info.hpp"
+#include "duckdb/planner/expression/bound_between_expression.hpp"
+#include "duckdb/planner/expression/bound_columnref_expression.hpp"
+#include "duckdb/planner/expression/bound_comparison_expression.hpp"
+#include "duckdb/planner/expression/bound_constant_expression.hpp"
+#include "duckdb/planner/operator/logical_get.hpp"
 
 #include <limits>
 #include <string>
@@ -37,6 +43,8 @@ struct NatsRwScanBindData : public TableFunctionData {
 	uint32_t concurrency = 32;
 	/// json_extract 路径（阶段五）；每路径一个额外输出列
 	std::vector<std::string> json_extract;
+	/// 谓词下推已应用（EXPLAIN 展示用）
+	bool pushdown_applied = false;
 };
 
 struct NatsRwScanRow {
@@ -257,6 +265,130 @@ static Value NatsRwHeadersValue(const std::vector<std::pair<std::string, std::st
 	                  std::move(map_values));
 }
 
+// ===== 谓词下推（阶段二性能优化，蓝本 nats_js MIT）=====
+
+// 表达式对应哪个 scan 列（非本表列 → INVALID_INDEX）
+static idx_t FilterColumn(const LogicalGet &get, const Expression &expr) {
+	if (expr.GetExpressionClass() != ExpressionClass::BOUND_COLUMN_REF) {
+		return DConstants::INVALID_INDEX;
+	}
+	auto &binding = expr.Cast<BoundColumnRefExpression>().Binding();
+	if (binding.table_index != get.table_index) {
+		return DConstants::INVALID_INDEX;
+	}
+	auto &column_index = get.GetColumnIndex(binding);
+	return column_index.IsVirtualColumn() ? DConstants::INVALID_INDEX : column_index.GetPrimaryIndex();
+}
+
+// 表达式是否可折叠为常量
+static bool FilterConstant(ClientContext &context, const Expression &expr, Value &result) {
+	return expr.IsFoldable() && ExpressionExecutor::TryEvaluateScalar(context, expr, result) && !result.IsNull();
+}
+
+// 单个比较条件 → 更新 bind_data 的 seq/time 范围
+static void PushdownComparison(NatsRwScanBindData &bind_data, idx_t column, ExpressionType comparison,
+                               const Value &constant) {
+	bool lower = comparison == ExpressionType::COMPARE_EQUAL || comparison == ExpressionType::COMPARE_GREATERTHAN ||
+	             comparison == ExpressionType::COMPARE_GREATERTHANOREQUALTO;
+	bool upper = comparison == ExpressionType::COMPARE_EQUAL || comparison == ExpressionType::COMPARE_LESSTHAN ||
+	             comparison == ExpressionType::COMPARE_LESSTHANOREQUALTO;
+	bool strict = comparison == ExpressionType::COMPARE_GREATERTHAN || comparison == ExpressionType::COMPARE_LESSTHAN;
+
+	if (column == COL_SEQ && constant.type().id() == LogicalTypeId::UBIGINT) {
+		auto seq = constant.GetValue<uint64_t>();
+		if (strict && (lower ? seq == NumericLimits<uint64_t>::Maximum() : seq == 0)) {
+			bind_data.start_seq = NumericLimits<uint64_t>::Maximum();
+			bind_data.end_seq = 0;
+			bind_data.pushdown_applied = true;
+			return;
+		}
+		seq = strict ? (lower ? seq + 1 : seq - 1) : seq;
+		if (lower && seq > bind_data.start_seq) {
+			bind_data.start_seq = seq;
+			bind_data.pushdown_applied = true;
+		}
+		if (upper && (bind_data.end_seq == 0 || seq < bind_data.end_seq)) {
+			bind_data.end_seq = seq;
+			bind_data.pushdown_applied = true;
+		}
+	} else if (column == COL_TS && constant.type().id() == LogicalTypeId::TIMESTAMP_TZ) {
+		auto time_us = constant.GetValue<timestamp_t>().value;
+		// 微秒→纳秒（复用钳位函数）
+		int64_t time_ns = MicrosToNanosClamped(time_us);
+		if (strict) {
+			time_ns = lower ? time_ns + 1 : time_ns - 1;
+		}
+		if (lower && (!bind_data.has_start_time || time_ns > bind_data.start_time_nanos)) {
+			bind_data.start_time_nanos = time_ns;
+			bind_data.has_start_time = true;
+			bind_data.pushdown_applied = true;
+		}
+		if (upper && (!bind_data.has_end_time || time_ns < bind_data.end_time_nanos)) {
+			bind_data.end_time_nanos = time_ns;
+			bind_data.has_end_time = true;
+			bind_data.pushdown_applied = true;
+		}
+	}
+}
+
+// 遍历 WHERE filters，识别可下推的比较条件
+static void PushdownFilter(ClientContext &context, const LogicalGet &get, NatsRwScanBindData &bind_data,
+                           const Expression &filter) {
+	if (filter.GetExpressionClass() != ExpressionClass::BOUND_FUNCTION) {
+		return;
+	}
+	auto &function = filter.Cast<BoundFunctionExpression>();
+	Value constant;
+	if (filter.GetExpressionType() == ExpressionType::COMPARE_BETWEEN) {
+		if (!BoundBetweenExpression::HasValidBindData(function)) {
+			return;
+		}
+		auto column = FilterColumn(get, BoundBetweenExpression::Input(function));
+		if (column == DConstants::INVALID_INDEX) {
+			return;
+		}
+		if (FilterConstant(context, BoundBetweenExpression::LowerBound(function), constant)) {
+			PushdownComparison(bind_data, column, BoundBetweenExpression::LowerComparisonType(function), constant);
+		}
+		if (FilterConstant(context, BoundBetweenExpression::UpperBound(function), constant)) {
+			PushdownComparison(bind_data, column, BoundBetweenExpression::UpperComparisonType(function), constant);
+		}
+	} else if (BoundComparisonExpression::IsComparison(filter)) {
+		auto comparison = filter.GetExpressionType();
+		auto &left = BoundComparisonExpression::Left(function);
+		auto &right = BoundComparisonExpression::Right(function);
+		auto column = FilterColumn(get, left);
+		if (column != DConstants::INVALID_INDEX && FilterConstant(context, right, constant)) {
+			PushdownComparison(bind_data, column, comparison, constant);
+		} else if ((column = FilterColumn(get, right)) != DConstants::INVALID_INDEX &&
+		           FilterConstant(context, left, constant)) {
+			PushdownComparison(bind_data, column, FlipComparisonExpression(comparison), constant);
+		}
+	}
+	// subject 等非 seq/time 列的 filter 留在 DuckDB 层过滤（不消费）
+}
+
+// DuckDB 调用的入口：在优化阶段将 WHERE 条件传给扩展
+static void NatsRwScanPushdownComplexFilter(ClientContext &context, LogicalGet &get, FunctionData *bind_data_p,
+                                            vector<unique_ptr<Expression>> &filters) {
+	auto &bind_data = bind_data_p->Cast<NatsRwScanBindData>();
+	for (auto &filter : filters) {
+		PushdownFilter(context, get, bind_data, *filter);
+	}
+}
+
+// EXPLAIN 显示用
+static InsertionOrderPreservingMap<string> NatsRwScanToString(TableFunctionToStringInput &input) {
+	auto &bind_data = input.bind_data->Cast<NatsRwScanBindData>();
+	InsertionOrderPreservingMap<string> result;
+	result["Stream"] = bind_data.stream;
+	if (bind_data.pushdown_applied) {
+		result["Seq Range"] = "[" + std::to_string(bind_data.start_seq) + ", " +
+		                      (bind_data.end_seq == 0 ? "last" : std::to_string(bind_data.end_seq)) + "]";
+	}
+	return result;
+}
+
 static void NatsRwScanExecute(ClientContext &context, TableFunctionInput &data_p, DataChunk &output) {
 	auto &bind_data = data_p.bind_data->Cast<NatsRwScanBindData>();
 	auto &state = data_p.global_state->Cast<NatsRwScanGlobalState>();
@@ -308,6 +440,10 @@ void NatsRwScanFunction::Register(ExtensionLoader &loader) {
 		options.Add("batch_size", LogicalType(LogicalTypeId::UBIGINT));
 		options.Add("json_extract", LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR)));
 	});
+
+	// 谓词下推：WHERE seq/ts_nats 条件翻译为 scan 参数（阶段二性能优化）
+	nats_rw_scan.pushdown_complex_filter = NatsRwScanPushdownComplexFilter;
+	nats_rw_scan.to_string = NatsRwScanToString;
 
 	loader.RegisterFunction(nats_rw_scan);
 }

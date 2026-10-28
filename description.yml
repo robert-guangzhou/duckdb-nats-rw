@@ -23,6 +23,11 @@ docs:
     -- Read it back
     SELECT * FROM nats_rw_scan('my_stream', url := 'nats://localhost:4222');
 
+    -- Extract JSON fields as columns
+    SELECT device_id, location_zone
+    FROM nats_rw_scan('my_stream', url := 'nats://localhost:4222',
+        json_extract := ['device_id', 'location.zone']);
+
   extended_description: |
     The nats_rw extension provides bidirectional NATS JetStream access from DuckDB:
 
