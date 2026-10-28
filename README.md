@@ -41,6 +41,7 @@ SELECT * FROM nats_rw_stream_info('telemetry', url := 'nats://localhost:4222');
 | `start_time` | TIMESTAMPTZ | (none) | Time range start (inclusive) |
 | `end_time` | TIMESTAMPTZ | (none) | Time range end (inclusive) |
 | `batch_size` | UBIGINT | 32 | Concurrent fetch parallelism [1, 256] |
+| `json_extract` | VARCHAR[] | (none) | JSON field paths to extract as extra columns (e.g. `['device_id', 'location.zone']`) |
 
 ### COPY … TO (FORMAT nats_rw)
 
@@ -133,7 +134,7 @@ SELECT * FROM nats_rw_stream_info('telemetry', secret := 'my_nats');
 - Subject filtering is client-side (full stream is fetched then filtered)
 - Each query creates a new connection (no connection pooling)
 - Publish is serial per-message ack (no pipelining)
-- `json_extract` and predicate pushdown not yet implemented
+- Predicate pushdown not yet implemented
 
 ## License
 
