@@ -1,0 +1,58 @@
+# name: test/sql/json-extract.test
+# description: json_extract parameter for nats_rw_scan (phase 5)
+# group: [sql]
+
+require nats_rw
+
+# 先种入 JSON 格式的测试数据
+statement ok
+COPY (SELECT '{"device_id":"sensor-1","location":{"zone":"north"},"kw":12.5}' AS v)
+TO 'json_rt' (FORMAT nats_rw, url 'nats://nats:4222', payload_column 'v', create_stream 'true');
+
+statement ok
+COPY (SELECT 'plain text not json' AS v)
+TO 'json_rt' (FORMAT nats_rw, url 'nats://nats:4222', payload_column 'v');
+
+# json_extract：顶层字段
+query T
+SELECT DISTINCT device_id FROM nats_rw_scan('json_rt', url := 'nats://nats:4222', json_extract := ['device_id']) WHERE device_id IS NOT NULL;
+----
+sensor-1
+
+# json_extract：嵌套路径（点分隔）
+query T
+SELECT DISTINCT location_zone FROM nats_rw_scan('json_rt', url := 'nats://nats:4222', json_extract := ['location.zone']) WHERE location_zone IS NOT NULL;
+----
+north
+
+# json_extract：数值以字符串形式输出
+query T
+SELECT DISTINCT kw FROM nats_rw_scan('json_rt', url := 'nats://nats:4222', json_extract := ['kw']) WHERE kw IS NOT NULL;
+----
+12.5
+
+# json_extract：非 JSON payload 的行 → NULL（不报错）
+query I
+SELECT count(*) >= 1 FROM nats_rw_scan('json_rt', url := 'nats://nats:4222', json_extract := ['device_id']) WHERE device_id IS NULL;
+----
+1
+
+# json_extract：不存在的字段 → NULL
+query I
+SELECT count(*) >= 1 FROM nats_rw_scan('json_rt', url := 'nats://nats:4222', json_extract := ['nonexistent']) WHERE nonexistent IS NULL;
+----
+1
+
+# json_extract：多字段同时提取
+query TT
+SELECT DISTINCT device_id, location_zone FROM nats_rw_scan('json_rt', url := 'nats://nats:4222',
+    json_extract := ['device_id', 'location.zone']) WHERE device_id IS NOT NULL;
+----
+sensor-1	north
+
+# schema 含额外列（DESCRIBE 验证）
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM nats_rw_scan('json_rt',
+    url := 'nats://nats:4222', json_extract := ['device_id'])) WHERE column_name = 'device_id';
+----
+device_id	VARCHAR

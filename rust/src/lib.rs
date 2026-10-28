@@ -108,6 +108,8 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
     start_time_nanos: i64,
     end_time_nanos: i64,
     concurrency: u32,
+    json_extract_paths: *const *const c_char,
+    json_extract_count: u32,
     out: *mut *mut std::ffi::c_void,
     err_out: *mut *mut c_char,
 ) -> i32 {
@@ -120,6 +122,15 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
         let url = arg_str(url, "url")?.to_string();
         let auth = auth_from_ffi(user, password, token, nkey, creds)?;
         let subject = if subject.is_null() { None } else { Some(arg_str(subject, "subject")?.to_string()) };
+        let mut json_extract = Vec::new();
+        if !json_extract_paths.is_null() && json_extract_count > 0 {
+            for i in 0..json_extract_count as usize {
+                let p = *json_extract_paths.add(i);
+                if !p.is_null() {
+                    json_extract.push(arg_str(p, "json_extract path")?.to_string());
+                }
+            }
+        }
         let params = ScanParams {
             stream,
             url,
@@ -130,6 +141,7 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
             start_time_nanos: if start_time_nanos == i64::MIN { None } else { Some(start_time_nanos) },
             end_time_nanos: if end_time_nanos == i64::MIN { None } else { Some(end_time_nanos) },
             concurrency: concurrency.clamp(1, 64) as usize,
+            json_extract,
         };
         // 阶段二 MVP：有界快照一次性物化（计划三章 3.3 语义）
         runtime().block_on(scan::scan(params))
@@ -209,6 +221,34 @@ pub unsafe extern "C" fn nats_rw_scan_header_value(
         .and_then(|m| m.headers.get(h as usize))
         .map(|(_, v)| v.as_ptr())
         .unwrap_or(std::ptr::null())
+}
+
+#[no_mangle]
+/// json_extract 字段数（每条消息相同 = json_extract 路径数）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_scan_json_field_count(r: *const std::ffi::c_void, i: usize) -> u32 {
+    (r as *const ScanData)
+        .as_ref()
+        .and_then(|d| d.msgs.get(i))
+        .map(|m| m.json_fields.len() as u32)
+        .unwrap_or(0)
+}
+
+/// json_extract 指定路径的值（NULL = 非 JSON / 字段不存在）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_scan_json_field(
+    r: *const std::ffi::c_void,
+    i: usize,
+    j: u32,
+) -> *const c_char {
+    (r as *const ScanData)
+        .as_ref()
+        .and_then(|d| d.msgs.get(i))
+        .and_then(|m| m.json_fields.get(j as usize))
+        .and_then(|opt| opt.as_ref())
+        .map(|s| s.as_ptr())
+        .unwrap_or(std::ptr::null())
+// where json_fields is Vec<Option<CString>> — s is &CString, as_ptr() is correct
 }
 
 #[no_mangle]

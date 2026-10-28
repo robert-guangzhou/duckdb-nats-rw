@@ -45,6 +45,8 @@ int32_t nats_rw_scan_execute(const char *stream,
                              int64_t start_time_nanos,
                              int64_t end_time_nanos,
                              uint32_t concurrency,
+                             const char *const *json_extract_paths,
+                             uint32_t json_extract_count,
                              void **out,
                              char **err_out);
 
@@ -66,6 +68,16 @@ uint32_t nats_rw_scan_header_count(const void *r, uintptr_t i);
 const char *nats_rw_scan_header_key(const void *r, uintptr_t i, uint32_t h);
 
 const char *nats_rw_scan_header_value(const void *r, uintptr_t i, uint32_t h);
+
+/**
+ * json_extract 字段数（每条消息相同 = json_extract 路径数）。
+ */
+uint32_t nats_rw_scan_json_field_count(const void *r, uintptr_t i);
+
+/**
+ * json_extract 指定路径的值（NULL = 非 JSON / 字段不存在）。
+ */
+const char *nats_rw_scan_json_field(const void *r, uintptr_t i, uint32_t j);
 
 const uint8_t *nats_rw_scan_payload(const void *r, uintptr_t i, uint64_t *len_out);
 

@@ -34,6 +34,7 @@ async fn seed(url: &str) -> Result<usize, String> {
     let _ = js.delete_stream("rt_rt").await;
     let _ = js.delete_stream("rt_guard").await;
     let _ = js.delete_stream("rt_json").await;
+    let _ = js.delete_stream("json_rt").await;
     let _ = js.delete_stream("rt_null").await;
     let _ = js.delete_stream("rt_chaos").await;
     let _ = js.delete_stream("perf_stream").await;

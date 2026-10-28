@@ -35,6 +35,8 @@ struct NatsRwScanBindData : public TableFunctionData {
 	bool has_end_time = false;
 	int64_t end_time_nanos = 0;
 	uint32_t concurrency = 32;
+	/// json_extract 路径（阶段五）；每路径一个额外输出列
+	std::vector<std::string> json_extract;
 };
 
 struct NatsRwScanRow {
@@ -43,6 +45,8 @@ struct NatsRwScanRow {
 	int64_t time_nanos;
 	std::vector<std::pair<std::string, std::string>> headers;
 	std::string payload; // 原始字节
+	/// json_extract 结果（与 bind 的 json_extract 同序）
+	std::vector<std::optional<std::string>> json_fields;
 };
 
 struct NatsRwScanGlobalState : public GlobalTableFunctionState {
@@ -119,6 +123,16 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 				throw BinderException("nats_rw_scan: batch_size must be within [1, 256]");
 			}
 			bind_data->concurrency = static_cast<uint32_t>(batch);
+		} else if (key == "json_extract") {
+			// VARCHAR[] 参数：JSON 字段路径列表
+			auto list_value = value;
+			if (!list_value.IsNull() && list_value.type().id() == LogicalTypeId::LIST) {
+				for (auto &item : ListValue::GetChildren(list_value)) {
+					if (!item.IsNull()) {
+						bind_data->json_extract.push_back(item.GetValue<std::string>());
+					}
+				}
+			}
 		}
 	}
 
@@ -149,6 +163,14 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 	return_types.emplace_back(LogicalType::MAP(LogicalType::VARCHAR, LogicalType::LIST(LogicalType::VARCHAR)));
 	names.emplace_back("payload");
 	return_types.emplace_back(LogicalType::BLOB);
+	// json_extract 额外列：每路径一个 VARCHAR（列名 = 路径的合法标识符形式，
+	// 点转下划线："location.zone" → "location_zone"）
+	for (auto &path : bind_data->json_extract) {
+		std::string col_name = path;
+		std::replace(col_name.begin(), col_name.end(), '.', '_');
+		names.emplace_back(col_name);
+		return_types.emplace_back(LogicalType::VARCHAR);
+	}
 
 	return std::move(bind_data);
 }
@@ -165,6 +187,12 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 
 	void *raw = nullptr;
 	char *err = nullptr;
+	// json_extract 路径数组 → FFI
+	std::vector<const char *> json_paths;
+	for (auto &p : bind_data.json_extract) {
+		json_paths.push_back(p.c_str());
+	}
+
 	int32_t rc = nats_rw_scan_execute(
 	    bind_data.stream.c_str(), bind_data.url.c_str(), NatsRwAuthOrNull(bind_data.user),
 	    NatsRwAuthOrNull(bind_data.password), NatsRwAuthOrNull(bind_data.token), NatsRwAuthOrNull(bind_data.nkey),
@@ -172,7 +200,7 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 	    bind_data.start_seq, bind_data.end_seq,
 	    bind_data.has_start_time ? bind_data.start_time_nanos : std::numeric_limits<int64_t>::min(),
 	    bind_data.has_end_time ? bind_data.end_time_nanos : std::numeric_limits<int64_t>::min(), bind_data.concurrency,
-	    &raw, &err);
+	    json_paths.empty() ? nullptr : json_paths.data(), static_cast<uint32_t>(json_paths.size()), &raw, &err);
 	if (rc != 0) {
 		if (rc == 1 && err != nullptr) {
 			ThrowRustError(err);
@@ -198,6 +226,13 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 		const uint8_t *pdata = nats_rw_scan_payload(raw, i, &plen);
 		if (pdata != nullptr) {
 			row.payload.assign(reinterpret_cast<const char *>(pdata), plen);
+		}
+		// json_extract 结果
+		uint32_t jfcount = nats_rw_scan_json_field_count(raw, i);
+		row.json_fields.reserve(jfcount);
+		for (uint32_t j = 0; j < jfcount; j++) {
+			const char *jf = nats_rw_scan_json_field(raw, i, j);
+			row.json_fields.emplace_back(jf != nullptr ? std::optional<std::string>(jf) : std::nullopt);
 		}
 		state->rows.push_back(std::move(row));
 	}
@@ -242,6 +277,14 @@ static void NatsRwScanExecute(ClientContext &context, TableFunctionInput &data_p
 		// BLOB_RAW：payload 是原始字节（非 blob 字面量——Value::BLOB(string) 会按
 		// 字面量语义拒绝非 ASCII 裸字节，中文载荷在 2026-10-27 暴露此错）
 		output.SetValue(COL_PAYLOAD, out, Value::BLOB_RAW(row.payload));
+		// json_extract 额外列（NULL = 非 JSON / 字段不存在）
+		for (size_t j = 0; j < row.json_fields.size(); j++) {
+			if (row.json_fields[j].has_value()) {
+				output.SetValue(COL_PAYLOAD + 1 + j, out, Value(*row.json_fields[j]));
+			} else {
+				output.SetValue(COL_PAYLOAD + 1 + j, out, Value());
+			}
+		}
 
 		state.offset++;
 		out++;
@@ -263,6 +306,7 @@ void NatsRwScanFunction::Register(ExtensionLoader &loader) {
 		options.Add("start_time", LogicalType(LogicalTypeId::TIMESTAMP_TZ));
 		options.Add("end_time", LogicalType(LogicalTypeId::TIMESTAMP_TZ));
 		options.Add("batch_size", LogicalType(LogicalTypeId::UBIGINT));
+		options.Add("json_extract", LogicalType::LIST(LogicalType(LogicalTypeId::VARCHAR)));
 	});
 
 	loader.RegisterFunction(nats_rw_scan);

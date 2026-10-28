@@ -23,6 +23,9 @@ pub(crate) struct ScanParams {
     pub(crate) start_time_nanos: Option<i64>,
     pub(crate) end_time_nanos: Option<i64>,
     pub(crate) concurrency: usize,
+    /// JSON 字段路径列表（如 ["device_id", "location.zone"]）——payload 为 JSON 时
+    /// 提取指定字段作为额外输出列；非 JSON payload 该列输出 NULL。
+    pub(crate) json_extract: Vec<String>,
 }
 
 pub(crate) struct ScanMsg {
@@ -32,6 +35,8 @@ pub(crate) struct ScanMsg {
     pub(crate) time_nanos: i64,
     pub(crate) headers: Vec<(CString, CString)>,
     pub(crate) payload: Vec<u8>,
+    /// json_extract 的结果：每路径一个值（None = 非 JSON 或字段不存在）
+    pub(crate) json_fields: Vec<Option<CString>>,
 }
 
 pub(crate) struct ScanData {
@@ -160,6 +165,7 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
             time_nanos: nanos as i64,
             headers,
             payload: m.payload.to_vec(),
+            json_fields: extract_json_fields(&m.payload, &p.json_extract),
         });
     }
     Ok(Box::new(ScanData { stream: to_cstring(&stream_name)?, msgs }))
@@ -167,6 +173,30 @@ pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
 
 fn to_cstring(s: &str) -> Result<CString, String> {
     CString::new(s).map_err(|_| format!("string contains NUL byte: {:?}", s))
+}
+
+/// 按点分路径从 JSON payload 提取字段值（"location.zone" → payload.location.zone）。
+/// 非 JSON payload 或字段不存在 → None。
+fn extract_json_fields(payload: &[u8], paths: &[String]) -> Vec<Option<CString>> {
+    if paths.is_empty() {
+        return Vec::new();
+    }
+    let parsed: Option<serde_json::Value> = serde_json::from_slice(payload).ok();
+    paths
+        .iter()
+        .map(|path| {
+            let root = parsed.as_ref()?;
+            let mut current = root;
+            for segment in path.split('.') {
+                current = current.get(segment)?;
+            }
+            match current {
+                serde_json::Value::String(s) => Some(s.clone()),
+                other => Some(other.to_string()),
+            }
+            .and_then(|v| CString::new(v).ok())
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -197,5 +227,33 @@ mod tests {
         assert!(is_no_responders("unable to get message: 503 no responders"));
         assert!(is_no_responders("503 Service Unavailable"));
         assert!(!is_no_responders("timeout"));
+    }
+
+    #[test]
+    fn json_field_extraction() {
+        let payload = br#"{"device_id":"sensor-1","location":{"zone":"north","floor":3},"kw":12.5,"active":true}"#;
+        let paths: Vec<String> = vec!["device_id".into(), "location.zone".into(), "kw".into(), "active".into(), "missing".into()];
+
+        let fields = extract_json_fields(payload, &paths);
+        assert_eq!(fields[0].as_ref().map(|s| s.to_str().unwrap()), Some("sensor-1"));
+        assert_eq!(fields[1].as_ref().map(|s| s.to_str().unwrap()), Some("north"));
+        assert_eq!(fields[2].as_ref().map(|s| s.to_str().unwrap()), Some("12.5"));
+        assert_eq!(fields[3].as_ref().map(|s| s.to_str().unwrap()), Some("true"));
+        assert_eq!(fields[4], None); // 字段不存在
+    }
+
+    #[test]
+    fn json_field_extraction_non_json_payload() {
+        let payload = b"not json at all";
+        let paths: Vec<String> = vec!["field".into()];
+        let fields = extract_json_fields(payload, &paths);
+        assert_eq!(fields[0], None); // 非 JSON → None，不报错
+    }
+
+    #[test]
+    fn json_field_extraction_empty_paths() {
+        let payload = br#"{"a":1}"#;
+        let fields = extract_json_fields(payload, &[]);
+        assert!(fields.is_empty());
     }
 }
