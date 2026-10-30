@@ -2,6 +2,14 @@
 # rust/src/lib.rs 比 src/include/nats_rw_rust.h 新 → 编译前 FATAL_ERROR
 # 防止：改了 Rust FFI 签名但忘跑 regen-header.sh，到 C++ 编译才报
 #       "too many arguments" 的晚发现（Dev Plan 六章 + lessons L1 类）
+#
+# ⚠️ CI 跳过（2026-10-28 PR #3442 事故）：git checkout 逐文件写入，
+#    不同目录的文件时间戳几乎必然有微秒级差异，导致误报。
+#    本检测仅适用于本地开发环境（开发者手动修改文件后时间戳语义有意义）。
+
+if(DEFINED ENV{CI} AND "$ENV{CI}" STREQUAL "true")
+    return()  # GitHub Actions / CI 环境：跳过时间戳比较
+endif()
 
 set(RUST_LIB "${BASE_DIR}/rust/src/lib.rs")
 set(CBINDGEN_CFG "${BASE_DIR}/rust/cbindgen.toml")
