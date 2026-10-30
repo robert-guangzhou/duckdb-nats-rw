@@ -65,6 +65,18 @@ if(EMSCRIPTEN)
     set(Rust_CARGO_TARGET "wasm32-unknown-emscripten")
 endif()
 
+# CI 环境下 vcpkg toolchain 可能干扰 corrosion 的自动检测——显式钉死 Linux target
+# （PR #3442 排查：CI 的 CMAKE_TOOLCHAIN_FILE 设置 CMAKE_SYSTEM_NAME 后
+#  corrosion 的平台推断可能失败，导致 cargo 用错误目标编译）
+if(NOT Rust_CARGO_TARGET AND UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+        set(Rust_CARGO_TARGET "aarch64-unknown-linux-gnu")
+    else()
+        set(Rust_CARGO_TARGET "x86_64-unknown-linux-gnu")
+    endif()
+    message(STATUS "nats_rw: explicit Rust target (CI safety): ${Rust_CARGO_TARGET}")
+endif()
+
 add_subdirectory(corrosion)
 
 corrosion_import_crate(
