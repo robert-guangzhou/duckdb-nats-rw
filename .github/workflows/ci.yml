@@ -1,80 +1,16 @@
-name: CI v4 (community CI + ccache + pinned submodule)
+name: CI (clean build)
 on:
   push:
   pull_request:
   workflow_dispatch:
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ github.head_ref || '' }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
-  # Hypothesis 1: ccache breaks corrosion/Rust build
-  with-ccache:
-    name: ccache + vcpkg + make release (hypothesis 1)
-    runs-on: ubuntu-latest
-    timeout-minutes: 60
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: 'recursive'
-          fetch-depth: 0
-
-      - uses: dtolnay/rust-toolchain@stable
-
-      - name: Install Ninja
-        run: sudo apt-get update -y -qq && sudo apt-get install -y -qq ninja-build
-
-      # Exact same ccache setup as community CI (step 7)
-      - name: Setup Ccache (same as community CI)
-        uses: hendrikmuhs/ccache-action@d62db5f07c26379fc4b4e0916f098a92573c3b03 # v1.2.23
-        continue-on-error: true
-        with:
-          max-size: 5GB
-          evict-old-files: job
-
-      - name: Setup vcpkg
-        uses: lukka/run-vcpkg@v11.1
-        with:
-          vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
-
-      - name: Build via make release (with ccache injected)
-        env:
-          DUCKDB_PLATFORM: linux_amd64
-          DUCKDB_PLATFORM_RTOOLS: '0'
-          EXTENSION_NAME: nats_rw
-          EXTENSION_CANONICAL: nats_rw
-          ENABLE_EXTENSION_AUTOINSTALL: '1'
-          ENABLE_EXTENSION_AUTOLOADING: '1'
-          VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
-          VCPKG_TARGET_TRIPLET: x64-linux
-          CI: 'true'
-        run: |
-          # Inject ccache as compiler launcher (exactly what community CI does)
-          export CMAKE_C_COMPILER_LAUNCHER=ccache
-          export CMAKE_CXX_COMPILER_LAUNCHER=ccache
-          echo "ccache stats before build:"
-          ccache -s 2>/dev/null || true
-          echo
-          make release 2>&1 | tee make-release-ccache.log
-          echo "MAKE_EXIT=$?"
-          echo
-          echo "ccache stats after build:"
-          ccache -s 2>/dev/null || true
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ccache-build-log
-          path: make-release-ccache.log
-          retention-days: 7
-
-  # Hypothesis 2: duckdb submodule branch=main conflicts with CI's v2.0.0 checkout
-  # (No separate job needed — the .gitmodules fix is pushed and this job tests it)
-  baseline:
-    name: Baseline (no ccache, verify .gitmodules fix)
+  build:
+    name: Linux amd64 (vcpkg + Rust + make release)
     runs-on: ubuntu-latest
     timeout-minutes: 60
 
@@ -94,30 +30,34 @@ jobs:
         with:
           vcpkgGitCommitId: cd61e1e26a038e82d6550a3ebbe0fbbfe7da78e3
 
-      - name: Verify duckdb submodule version
-        run: |
-          cd duckdb
-          echo "DuckDB HEAD: $(git log --oneline -1)"
-          echo "Expected: v2.0.0 tag"
-
-      - name: Build via make release
+      - name: Build
         env:
-          DUCKDB_PLATFORM: linux_amd64
-          EXTENSION_NAME: nats_rw
           VCPKG_TOOLCHAIN_PATH: ${{ github.workspace }}/vcpkg/scripts/buildsystems/vcpkg.cmake
           VCPKG_TARGET_TRIPLET: x64-linux
-          CI: 'true'
         run: |
-          make release 2>&1 | tee make-release-baseline.log
-          echo "MAKE_EXIT=$?"
+          echo "=== Environment ==="
+          cmake --version | head -1
+          rustc --version
+          ninja --version
+          echo
+          echo "=== Building (make release) ==="
+          make release 2>&1 | tee build.log
+          BUILD_EXIT=$?
+          echo "BUILD_EXIT=$BUILD_EXIT"
+          exit $BUILD_EXIT
 
       - name: Upload build log
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: baseline-build-log
-          path: make-release-baseline.log
+          name: build-log
+          path: build.log
           retention-days: 7
+
+      - name: Test
+        if: success()
+        run: |
+          ./build/release/test/unittest test/sql/nats_rw.test
 
   cargo-audit:
     name: Cargo Audit
