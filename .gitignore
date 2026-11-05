@@ -6,3 +6,9 @@ target/
 test_output/
 tmp/
 rust/target/
+
+# NATS-dependent tests (local only, not for CI)
+test/sql/integration/
+test/sql/chaos/
+test/sql/fixtures/
+
