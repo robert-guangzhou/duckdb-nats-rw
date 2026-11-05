@@ -57,7 +57,7 @@ jobs:
       - name: Test
         if: success()
         run: |
-          ./build/release/test/unittest test/sql/nats_rw.test
+          ./build/release/test/unittest test/sql/
 
   cargo-audit:
     name: Cargo Audit
