@@ -12,3 +12,4 @@ test/sql/integration/
 test/sql/chaos/
 test/sql/fixtures/
 
+test/perf/
