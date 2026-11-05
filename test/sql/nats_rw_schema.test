@@ -1,0 +1,28 @@
+# name: test/sql/nats_rw_schema.test
+# description: Schema checks that need no NATS server (resolved before connecting)
+# group: [nats_rw]
+
+require nats_rw
+
+# Base columns
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM nats_rw_scan('s')) ORDER BY column_name;
+----
+headers	MAP(VARCHAR, VARCHAR[])
+payload	BLOB
+seq	UBIGINT
+stream	VARCHAR
+subject	VARCHAR
+ts_nats	TIMESTAMP WITH TIME ZONE
+
+# With json_extract
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM nats_rw_scan('s', json_extract := ['device_id'])) WHERE column_name = 'device_id';
+----
+device_id	VARCHAR
+
+# Version
+query T
+SELECT nats_rw_version();
+----
+0.1.0

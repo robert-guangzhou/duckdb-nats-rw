@@ -62,7 +62,7 @@ echo "[5/6] 构建 (make $TESTBUILD, timeout 90min, 日志限界 200MB${NOASLR:+
 $COMPOSE exec -T builder bash -c "cd /workspace && timeout 5400 $NOASLR make $TESTBUILD 2>&1 | head -c 209715200 > /workspace/tmp/runall-build.log; rc=\${PIPESTATUS[0]}; cat /workspace/tmp/runall-build.log; exit \$rc" | tee "$OUT/build-$TESTBUILD.log" | tail -3
 
 echo "[6/6] SQL 测试（单进程逐文件；timeout 300s + 单日志限界 50MB${NOASLR:+ + 关ASLR}；skip 视为失败）"
-for t in test/sql/*.test; do
+for t in test/sql/*.test test/sql/integration/*.test; do
   echo "--- $t"
   $COMPOSE exec -T builder bash -c "cd /workspace && ulimit -f 102400 && timeout 300 $NOASLR $ASAN_ENV ./build/$TESTBUILD/test/unittest '$t' > /workspace/tmp/runall-last-test.log 2>&1; rc=\$?; cat /workspace/tmp/runall-last-test.log; exit \$rc" | tee "$OUT/$(basename "$t").log" | tail -3
   # 诚实检查（TP-07d）：require 失败导致的整文件 skip 不是通过（2026-10-26 假阴性事故）
