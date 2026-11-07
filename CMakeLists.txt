@@ -120,16 +120,22 @@ if(NOT WIN32)
 endif()
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
-# 头文件检测先于扩展编译（两种目标都依赖）
-add_dependencies(${EXTENSION_NAME} nats_rw_header_check)
+# 头文件检测先于扩展编译
 add_dependencies(${LOADABLE_EXTENSION_NAME} nats_rw_header_check)
+if(NOT WIN32)
+    add_dependencies(${EXTENSION_NAME} nats_rw_header_check)
+endif()
 
-# staticlib 自含 Rust std 与全部依赖：链接进静态与可加载两种目标，产物单文件自足
-target_link_libraries(${EXTENSION_NAME} nats_rw-static)
+# staticlib 自含 Rust std 与全部依赖
 target_link_libraries(${LOADABLE_EXTENSION_NAME} nats_rw-static)
+if(NOT WIN32)
+    target_link_libraries(${EXTENSION_NAME} nats_rw-static)
+endif()
 
+if(NOT WIN32)
 install(
   TARGETS ${EXTENSION_NAME}
   EXPORT "${DUCKDB_EXPORT_SET}"
   LIBRARY DESTINATION "${INSTALL_LIB_DIR}"
   ARCHIVE DESTINATION "${INSTALL_LIB_DIR}")
+endif()
