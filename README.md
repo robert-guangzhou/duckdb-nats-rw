@@ -143,4 +143,6 @@ SELECT * FROM nats_rw_stream_info('telemetry', secret := 'my_nats');
 
 ## License
 
-MIT — see [LICENSE](LICENSE) for details. Copyright © 2018-2025 Stichting DuckDB Foundation.
+Business Source License 1.1 (BSL 1.1) — see [LICENSE](LICENSE) for details.
+Production use is permitted under the Additional Use Grant; the Licensed Work
+converts to the MIT license three years after first publication.
