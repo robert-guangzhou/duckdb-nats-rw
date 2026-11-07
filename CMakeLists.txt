@@ -104,12 +104,6 @@ corrosion_import_crate(
 
 
 
-# Windows 上重定向 corrosion .lib 输出避免与 DLL 导入库冲突
-if(WIN32 AND TARGET nats_rw-static)
-    set_target_properties(nats_rw-static PROPERTIES
-        ARCHIVE_OUTPUT_DIRECTORY "${NATS_RW_RUST_LIB_DIR}")
-endif()
-
 set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
 
 # FFI 头文件滞后检测（2026-10-27 阶段四事故根治——"头文件没再生"）
@@ -135,8 +129,12 @@ if(NOT WIN32)
 endif()
 
 # staticlib 自含 Rust std 与全部依赖
-target_link_libraries(${LOADABLE_EXTENSION_NAME} nats_rw-static)
-if(NOT WIN32)
+if(WIN32)
+    # Windows 上 .lib 在 rust-lib/ 子目录（corrosion patch 避免与 DLL 导入库冲突）
+    target_link_libraries(${LOADABLE_EXTENSION_NAME}
+        ${CMAKE_BINARY_DIR}/extension/nats_rw/rust-lib/nats_rw.lib)
+else()
+    target_link_libraries(${LOADABLE_EXTENSION_NAME} nats_rw-static)
     target_link_libraries(${EXTENSION_NAME} nats_rw-static)
 endif()
 

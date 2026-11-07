@@ -336,6 +336,11 @@ function(_corrosion_copy_byproduct_deferred target_name output_dir_prop_names ca
         list(TRANSFORM src_file_names PREPEND "deps/" REGEX "\.dll\.a$")
     endif()
     list(TRANSFORM src_file_names PREPEND "${cargo_build_dir}/")
+    # nats_rw patch: Windows 上 .lib 与 DLL 导入库同名冲突
+    # 复制到 rust-lib/ 子目录
+    if(WIN32 AND "${file_names}" MATCHES "\.lib$")
+        set(output_dir "${output_dir}/rust-lib")
+    endif()
     list(TRANSFORM file_names PREPEND "${output_dir}/" OUTPUT_VARIABLE dst_file_names)
     message(DEBUG "Adding command to copy byproducts `${file_names}` to ${dst_file_names}")
     add_custom_command(TARGET _cargo-build_${target_name}
