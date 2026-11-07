@@ -102,6 +102,14 @@ corrosion_import_crate(
   FLAGS
   --crate-type=staticlib)
 
+# Windows 上 corrosion 静态库与 loadable extension 的导入库同名冲突
+# 重命名 corrosion 输出避免
+if(WIN32)
+    set_target_properties(nats_rw-static PROPERTIES
+        ARCHIVE_OUTPUT_NAME nats_rw_rust
+        OUTPUT_NAME nats_rw_rust)
+endif()
+
 set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
 
 # FFI 头文件滞后检测（2026-10-27 阶段四事故根治——"头文件没再生"）
