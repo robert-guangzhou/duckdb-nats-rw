@@ -116,21 +116,22 @@ add_custom_target(nats_rw_header_check
     COMMENT "nats_rw: checking FFI header freshness (lib.rs vs nats_rw_rust.h)"
     VERBATIM)
 
-# Windows 上 static 和 loadable 都生成 .lib，会冲突——只构建 loadable
-if(NOT WIN32)
+# MSVC 上 static 和 loadable 都生成 .lib，会冲突——只构建 loadable
+# （MinGW 下两者命名不同：libnats_rw_extension.a vs libnats_rw.a，无冲突）
+if(NOT MSVC)
     build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 endif()
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 # 头文件检测先于扩展编译
 add_dependencies(${LOADABLE_EXTENSION_NAME} nats_rw_header_check)
-if(NOT WIN32)
+if(NOT MSVC)
     add_dependencies(${EXTENSION_NAME} nats_rw_header_check)
 endif()
 
 # staticlib 自含 Rust std 与全部依赖
-if(WIN32)
-    # Windows 上 .lib 在 rust-lib/ 子目录（corrosion patch 避免与 DLL 导入库冲突）
+if(MSVC)
+    # MSVC 上 .lib 在 rust-lib/ 子目录（corrosion patch 避免与 DLL 导入库冲突）
     target_link_libraries(${LOADABLE_EXTENSION_NAME}
         ${CMAKE_BINARY_DIR}/extension/nats_rw/rust-lib/nats_rw.lib
         userenv ntdll ws2_32)
@@ -139,7 +140,7 @@ else()
     target_link_libraries(${EXTENSION_NAME} nats_rw-static)
 endif()
 
-if(NOT WIN32)
+if(NOT MSVC)
 install(
   TARGETS ${EXTENSION_NAME}
   EXPORT "${DUCKDB_EXPORT_SET}"
