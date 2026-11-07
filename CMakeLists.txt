@@ -114,7 +114,10 @@ add_custom_target(nats_rw_header_check
     COMMENT "nats_rw: checking FFI header freshness (lib.rs vs nats_rw_rust.h)"
     VERBATIM)
 
-build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
+# Windows 上 static 和 loadable 都生成 .lib，会冲突——只构建 loadable
+if(NOT WIN32)
+    build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
+endif()
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
 
 # 头文件检测先于扩展编译（两种目标都依赖）
