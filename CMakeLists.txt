@@ -104,6 +104,12 @@ corrosion_import_crate(
 
 
 
+# Windows 上重定向 corrosion .lib 输出避免与 DLL 导入库冲突
+if(WIN32 AND TARGET nats_rw-static)
+    set_target_properties(nats_rw-static PROPERTIES
+        ARCHIVE_OUTPUT_DIRECTORY ${NATS_RW_RUST_LIB_DIR})
+endif()
+
 set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
 
 # FFI 头文件滞后检测（2026-10-27 阶段四事故根治——"头文件没再生"）
@@ -121,12 +127,6 @@ if(NOT WIN32)
     build_static_extension(${TARGET_NAME} ${EXTENSION_SOURCES})
 endif()
 build_loadable_extension(${TARGET_NAME} " " ${EXTENSION_SOURCES})
-
-# Windows 上 corrosion 静态库与 loadable extension 的导入库同名冲突
-# 阻止 DLL 生成导入库（.duckdb_extension 是完整的 DLL，无需 .lib 导入库）
-if(WIN32)
-    set_target_properties(${LOADABLE_EXTENSION_NAME} PROPERTIES ENABLE_EXPORTS OFF)
-endif()
 
 # 头文件检测先于扩展编译
 add_dependencies(${LOADABLE_EXTENSION_NAME} nats_rw_header_check)
