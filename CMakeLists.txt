@@ -6,6 +6,19 @@ set(CORROSION_VERBOSE_OUTPUT ON)
 set(CMAKE_CXX_STANDARD "17" CACHE STRING "C++ standard to enforce")
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# 显式检测构建主机架构（优先于模板的 OS_NAME/OS_ARCH 检测）
+# 修复：模板检测在 OS_NAME 未设置时默认 x86_64，ARM64 环境下产生错误 target
+if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN AND NOT Rust_CARGO_TARGET)
+    if(CMAKE_SYSTEM_PROCESSOR MATCHES "aarch64|ARM64")
+        set(Rust_CARGO_TARGET "aarch64-unknown-linux-gnu")
+    elseif(CMAKE_SYSTEM_PROCESSOR MATCHES "x86_64|AMD64")
+        set(Rust_CARGO_TARGET "x86_64-unknown-linux-gnu")
+    endif()
+    if(Rust_CARGO_TARGET)
+        message(STATUS "nats_rw: explicit Rust target (host arch): ${Rust_CARGO_TARGET}")
+    endif()
+endif()
+
 execute_process(
     COMMAND rustup target list --installed
     OUTPUT_VARIABLE RUST_TARGETS
