@@ -107,7 +107,7 @@ corrosion_import_crate(
 # Windows 上重定向 corrosion .lib 输出避免与 DLL 导入库冲突
 if(WIN32 AND TARGET nats_rw-static)
     set_target_properties(nats_rw-static PROPERTIES
-        ARCHIVE_OUTPUT_DIRECTORY ${NATS_RW_RUST_LIB_DIR})
+        ARCHIVE_OUTPUT_DIRECTORY "${NATS_RW_RUST_LIB_DIR}")
 endif()
 
 set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
