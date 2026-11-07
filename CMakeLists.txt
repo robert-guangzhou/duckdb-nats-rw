@@ -132,7 +132,8 @@ endif()
 if(WIN32)
     # Windows 上 .lib 在 rust-lib/ 子目录（corrosion patch 避免与 DLL 导入库冲突）
     target_link_libraries(${LOADABLE_EXTENSION_NAME}
-        ${CMAKE_BINARY_DIR}/extension/nats_rw/rust-lib/nats_rw.lib)
+        ${CMAKE_BINARY_DIR}/extension/nats_rw/rust-lib/nats_rw.lib
+        userenv ntdll ws2_32)
 else()
     target_link_libraries(${LOADABLE_EXTENSION_NAME} nats_rw-static)
     target_link_libraries(${EXTENSION_NAME} nats_rw-static)
