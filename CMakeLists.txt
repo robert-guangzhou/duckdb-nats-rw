@@ -103,11 +103,9 @@ corrosion_import_crate(
   --crate-type=staticlib)
 
 # Windows 上 corrosion 静态库与 loadable extension 的导入库同名冲突
-# 重命名 corrosion 输出避免
+# 阻止 DLL 生成导入库（.duckdb_extension 是完整的 DLL，无需 .lib 导入库）
 if(WIN32)
-    set_target_properties(nats_rw-static PROPERTIES
-        ARCHIVE_OUTPUT_NAME nats_rw_rust
-        OUTPUT_NAME nats_rw_rust)
+    set_target_properties(${LOADABLE_EXTENSION_NAME} PROPERTIES ENABLE_EXPORTS OFF)
 endif()
 
 set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
