@@ -25,4 +25,4 @@ device_id	VARCHAR
 query T
 SELECT nats_rw_version();
 ----
-0.1.0
+0.2.0
