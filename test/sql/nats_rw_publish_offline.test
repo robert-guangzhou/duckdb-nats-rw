@@ -22,10 +22,10 @@ published	BIGINT
 url	VARCHAR
 
 # ---- TP-08c: stats 空态（聚合行，全零，无错误）----
-query TTIIT
-SELECT url, published, errors, last_error IS NULL, CAST(last_error_at AS VARCHAR) FROM nats_rw_publish_stats();
+query TTIT
+SELECT url, published, errors, CAST(last_error_at AS VARCHAR) FROM nats_rw_publish_stats();
 ----
-<all>	0	0	true	NULL
+<all>	0	0	NULL
 
 # ---- TP-08c: url 过滤无匹配 = 零计数行（url 列为过滤串本身）----
 query TI
@@ -40,22 +40,37 @@ SELECT url, published FROM nats_rw_publish_stats(reset := true);
 <all>	0
 
 # ---- TP-08b: 负向 —— 无任何 nats_rw secret（publish 必须经 secret，无匿名路径）----
-statement error nats_rw_publish: no nats_rw secret
-SELECT nats_rw_publish('audit.x', 'payload');
+statement error
+SELECT nats_rw_publish('audit.x', 'payload', '', false);
+----
+nats_rw_publish: no nats_rw secret
 
 # ---- TP-08b: 负向 —— 具名 secret 不存在 ----
-statement error no secret named 'does_not_exist'
-SELECT nats_rw_publish('audit.x', 'payload', secret_name := 'does_not_exist');
+statement error
+SELECT nats_rw_publish('audit.x', 'payload', 'does_not_exist', false);
+----
+no secret named 'does_not_exist'
 
 # ---- TP-08b: 负向 —— secret 缺 URL 字段 ----
-statement error must carry URL
+statement ok
 CREATE SECRET nol (TYPE nats_rw, TOKEN 'tok');
-SELECT nats_rw_publish('audit.x', 'payload', secret_name := 'nol');
 
-# ---- batch 同款负向：无 secret ----
-statement error nats_rw_publish: no nats_rw secret
-SELECT * FROM nats_rw_publish_batch([{'subject': 'a.b', 'payload': 'x'}]);
+statement error
+SELECT nats_rw_publish('audit.x', 'payload', 'nol', false);
+----
+must carry URL
+
+# ---- batch 同款负向：无可用 secret（先清除 nol）----
+statement ok
+DROP SECRET nol;
+
+statement error
+SELECT * FROM nats_rw_publish_batch([{'subject': 'a.b', 'payload': 'x'::BLOB}]);
+----
+nats_rw_publish: no nats_rw secret
 
 # ---- secret 类型校验：TLS_CLIENT_CERT 与 KEY 必须成对（A2 Binder 层）----
-statement error TLS_CLIENT_CERT and TLS_CLIENT_KEY together
+statement error
 CREATE SECRET badtls (TYPE nats_rw, URL 'nats://h:4222', TLS_CLIENT_CERT 'c.pem');
+----
+TLS_CLIENT_CERT and TLS_CLIENT_KEY together

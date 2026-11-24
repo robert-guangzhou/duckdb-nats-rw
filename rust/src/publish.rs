@@ -294,6 +294,11 @@ mod stats {
 mod tests {
     use super::*;
 
+    fn test_stats_lock() -> std::sync::MutexGuard<'static, ()> {
+        static LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
+        LOCK.lock().unwrap_or_else(|e| e.into_inner())
+    }
+
     fn row(subject: &str, payload: &[u8]) -> PublishRow {
         PublishRow { subject: subject.into(), payload: payload.to_vec() }
     }
@@ -322,9 +327,11 @@ mod tests {
         assert!(validate_subject("seed.a.*.>").is_ok()); // 通配符合法
     }
 
-    // —— 统计语义（离线；swap 窗口不丢不重）——
+    // —— 统计语义（离线；swap 窗口不丢不重；三测试经 test_stats_lock 互斥——
+    // 并行 runner 下共享全局 map 会被 clear_for_test 互相清掉，2026-11-24 minis 实测）——
     #[test]
     fn stats_record_and_query() {
+        let _g = test_stats_lock();
         stats::clear_for_test();
         stats::record("nats://u1", true, None);
         stats::record("nats://u1", true, None);
@@ -338,6 +345,7 @@ mod tests {
 
     #[test]
     fn stats_reset_reads_then_zeroes() {
+        let _g = test_stats_lock();
         stats::clear_for_test();
         stats::record_batch("nats://u2", 5, 0);
         let r = stats_query("nats://u2", true);
@@ -351,6 +359,7 @@ mod tests {
 
     #[test]
     fn stats_aggregate_and_filter() {
+        let _g = test_stats_lock();
         stats::clear_for_test();
         stats::record("nats://a", true, None);
         stats::record("nats://b", false, Some("e-b".into()));

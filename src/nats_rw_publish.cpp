@@ -186,7 +186,7 @@ static unique_ptr<FunctionData> NatsRwPublishBatchBind(ClientContext &context, T
 					subject = StringValue::Get(struct_children[i]);
 				} else if (children[i].first == "payload") {
 					if (!struct_children[i].IsNull()) {
-						auto &blob = struct_children[i].GetValueUnsafe<string_t>();
+						auto blob = struct_children[i].GetValueUnsafe<string_t>();
 						payload.assign(blob.GetData(), blob.GetSize());
 					}
 				}
@@ -287,12 +287,21 @@ static unique_ptr<FunctionData> NatsRwStatsBind(ClientContext &context, TableFun
 	return std::move(bind_data);
 }
 
+struct NatsRwStatsGlobalState : public GlobalTableFunctionState {
+	bool consumed = false;
+};
+
 static unique_ptr<GlobalTableFunctionState> NatsRwStatsInitGlobal(ClientContext &context,
                                                                   TableFunctionInitInput &input) {
-	return make_uniq<GlobalTableFunctionState>();
+	return make_uniq<NatsRwStatsGlobalState>();
 }
 
 static void NatsRwStatsExecute(ClientContext &context, TableFunctionInput &data, DataChunk &output) {
+	auto &gstate = data.global_state->Cast<NatsRwStatsGlobalState>();
+	if (gstate.consumed) {
+		output.SetCardinality(0);
+		return;
+	}
 	auto &bind_data = data.bind_data->Cast<NatsRwStatsBindData>();
 	char *out_url = nullptr;
 	int64_t published = 0, errors = 0;
@@ -325,6 +334,7 @@ static void NatsRwStatsExecute(ClientContext &context, TableFunctionInput &data,
 	if (out_last_error) {
 		nats_rw_free_cstring(out_last_error);
 	}
+	gstate.consumed = true;
 }
 
 } // namespace
@@ -335,6 +345,8 @@ void RegisterNatsRwPublish(ExtensionLoader &loader) {
 	    "nats_rw_publish",
 	    {LogicalType::VARCHAR, LogicalType::BLOB, LogicalType::VARCHAR, LogicalType::BOOLEAN},
 	    LogicalType::BOOLEAN, NatsRwPublishScalar);
+	// 连接/发布可抛运行时错误（DNS 失败/不可达/认证拒绝）——DuckDB v2 要求显式标记
+	publish_fun.SetFallible();
 	loader.RegisterFunction(publish_fun);
 
 	// 表函数：nats_rw_publish_batch(messages LIST(STRUCT(subject VARCHAR, payload BLOB)),

@@ -33,7 +33,7 @@ REM Configure (flags mirror extension-ci-tools duckdb_extension.Makefile BUILD_F
   -DENABLE_UNITTEST_CPP_TESTS=FALSE ^
   -DENABLE_EXTENSION_AUTOLOADING=1 ^
   -DENABLE_EXTENSION_AUTOINSTALL=1 ^
-  -DOVERRIDE_GIT_DESCRIBE=v0.0.0 ^
+  ^
   -S "%PROJ_DIR%duckdb" -B "%PROJ_DIR%build\release"
 if errorlevel 1 (
     echo CONFIGURE FAILED

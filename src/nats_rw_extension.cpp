@@ -42,7 +42,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// 认证与元数据（TP-04 组，阶段四）
 	NatsRwSecret::Register(loader);
 	NatsRwMetaFunctions::Register(loader);
-	// BISECT: RegisterNatsRwPublish(loader);
+	RegisterNatsRwPublish(loader);
 }
 
 void NatsRwExtension::Load(ExtensionLoader &loader) {

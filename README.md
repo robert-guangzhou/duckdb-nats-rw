@@ -128,6 +128,64 @@ SELECT * FROM nats_rw_streams('', secret := 'my_nats');
 SELECT * FROM nats_rw_stream_info('telemetry', secret := 'my_nats');
 ```
 
+## Core NATS Publishing (v0.2.0)
+
+In addition to JetStream reads/writes, nats_rw now supports **core NATS** (non-JetStream)
+fire-and-forget publishing — useful for audit trails, event notification, and other
+scenarios where JetStream persistence is not required.
+
+```sql
+-- Create a secret first (URL + auth + optional TLS)
+CREATE SECRET my_nats (TYPE nats_rw, URL 'nats://localhost:4222');
+
+-- Single message
+SELECT nats_rw_publish('audit.event', '{"user":"alice","action":"read"}',
+                       secret_name := 'my_nats',     -- optional: use a named secret
+                       confirm := false);             -- true = flush after publish (PING/PONG)
+
+-- Batch publish (returns count of successful publishes)
+SELECT * FROM nats_rw_publish_batch([
+  {'subject': 'audit.evt1', 'payload': 'data1'},
+  {'subject': 'audit.evt2', 'payload': 'data2'}
+], secret_name := 'my_nats', confirm := true);
+
+-- Publish statistics (per-URL counters, optionally reset)
+SELECT * FROM nats_rw_publish_stats();                          -- aggregate
+SELECT * FROM nats_rw_publish_stats(url := 'nats://host:4222'); -- filtered
+SELECT * FROM nats_rw_publish_stats(reset := true);             -- read-and-clear
+```
+
+**Secret-driven**: `nats_rw_publish` takes **no URL parameter** — connection info comes
+entirely from the secret. When `secret_name` is omitted, the default (scopeless) secret
+is used. This eliminates URL/credential ambiguity.
+
+**Semantics**: Core NATS publishing does **not** create streams, check streams, or
+persist messages. `confirm := true` adds a PING/PONG round-trip (server has processed
+all prior messages). For persistent writes, use `COPY ... (FORMAT nats_rw)` (JetStream).
+
+## TLS Support (v0.2.0)
+
+All connections (scan, COPY, publish) support TLS via four optional secret fields:
+
+```sql
+CREATE SECRET nats_tls (TYPE nats_rw, URL 'tls://host:4222',
+  TLS_REQUIRED false,              -- default: scheme-driven (tls:// = TLS, nats:// = plain)
+  TLS_ROOT_CERT '/path/ca.pem',   -- custom CA (for self-signed certificates)
+  TLS_CLIENT_CERT '/c.pem',       -- mTLS client certificate (requires TLS_CLIENT_KEY)
+  TLS_CLIENT_KEY '/k.pem');        -- paired with TLS_CLIENT_CERT
+```
+
+| Setting | Effect |
+|---------|--------|
+| `TLS_ROOT_CERT` | Use a custom CA instead of system roots |
+| `TLS_REQUIRED true` | Must use TLS; plain connections rejected |
+| `TLS_CLIENT_CERT` + `TLS_CLIENT_KEY` | mTLS: present client certificate |
+| All four omitted | Behavior identical to previous versions |
+
+> **Known limitation**: mTLS (`TLS_CLIENT_CERT` + `TLS_CLIENT_KEY`) has a known
+> rustls `Identity` loading issue ("could not add certificate or key") in this
+> release. The basic TLS path (CA + `tls://` scheme) works correctly.
+
 ## Performance
 
 - **Connection pooling**: Connections are cached per `(url, auth)` — repeated queries to the same server reuse a single NATS connection
@@ -138,7 +196,9 @@ SELECT * FROM nats_rw_stream_info('telemetry', secret := 'my_nats');
 
 - COPY is **not atomic** — mid-batch failures leave partial data (JetStream at-least-once semantics)
 - Subject filtering is client-side (seq/time predicates are pushed down automatically)
-- Publish is serial per-message ack (no pipelining)
+- Publish (JetStream COPY) is serial per-message ack (no pipelining)
+- Core NATS publish (`nats_rw_publish`) is fire-and-forget — no delivery guarantee without `confirm := true`
+- mTLS client certificates have a known rustls loading issue (see TLS section above)
 
 
 ## License

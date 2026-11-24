@@ -38,6 +38,7 @@ async fn seed(url: &str) -> Result<usize, String> {
     let _ = js.delete_stream("rt_null").await;
     let _ = js.delete_stream("rt_chaos").await;
     let _ = js.delete_stream("perf_stream").await;
+    let _ = js.delete_stream("cap_stream").await;
     // 认证服务器（阶段四）：独立连接清理
     if let Ok(client) = async_nats::ConnectOptions::new()
         .user_and_password("admin".into(), "s3cret-pass".into())
@@ -102,6 +103,16 @@ async fn seed(url: &str) -> Result<usize, String> {
             .await
             .map_err(|e| format!("nd ack failed: {e}"))?;
     }
+
+    // core-publish 环回捕获流（TP-08d）：core NATS PUB 落入该 JetStream 流后经 scan 读回
+    js.create_stream(async_nats::jetstream::stream::Config {
+        name: "cap_stream".into(),
+        subjects: vec!["cap.>".into()],
+        allow_direct: true,
+        ..Default::default()
+    })
+    .await
+    .map_err(|e| format!("create_stream cap_stream failed: {e}"))?;
 
     let mut count = 0usize;
     for (prefix, unit) in [("a", "alpha"), ("b", "beta")] {

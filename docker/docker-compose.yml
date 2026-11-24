@@ -31,6 +31,29 @@ services:
     volumes:
       - nats-token-data:/data
 
+  # TP-09a-c 普通 TLS 服务（自签证书；tls:// 连接 / TLS_ROOT_CERT 验证 / TLS_REQUIRED 拒明文负向）
+  nats_tls:
+    image: nats:2.11
+    container_name: nats-rw-nats-tls
+    command: ["--jetstream", "--store_dir", "/data",
+              "--tls", "--tlscert", "/etc/nats/certs/server.pem",
+              "--tlskey", "/etc/nats/certs/server-key.pem"]
+    volumes:
+      - nats-tls-data:/data
+      - ../tmp/tls-certs:/etc/nats/certs:ro
+
+  # TP-09d mTLS 服务（--tlsverify 要求客户端证书）
+  nats_mtls:
+    image: nats:2.11
+    container_name: nats-rw-nats-mtls
+    command: ["--jetstream", "--store_dir", "/data",
+              "--tls", "--tlscert", "/etc/nats/certs/server.pem",
+              "--tlskey", "/etc/nats/certs/server-key.pem",
+              "--tlsverify", "--tlscacert", "/etc/nats/certs/ca.pem"]
+    volumes:
+      - nats-mtls-data:/data
+      - ../tmp/tls-certs:/etc/nats/certs:ro
+
   builder:
     build:
       context: ..
@@ -65,6 +88,8 @@ services:
 
 volumes:
   nats-data:
+  nats-tls-data:
+  nats-mtls-data:
   nats-userpass-data:
   nats-token-data:
   cargo-cache:

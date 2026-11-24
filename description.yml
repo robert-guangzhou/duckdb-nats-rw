@@ -1,7 +1,7 @@
 extension:
   name: nats_rw
   description: Read and write NATS JetStream streams with SQL
-  version: 0.1.0
+  version: 0.2.0
   language: C++
   build: cmake
   license: BSL 1.1
