@@ -9,12 +9,15 @@ use std::collections::HashMap;
 use std::sync::{Arc, OnceLock, RwLock};
 
 use crate::auth::{connect_authenticated, AuthMethod, CONNECT_TIMEOUT};
+use crate::tls::TlsConfig;
 
-/// 缓存键：URL + 认证方法的组合唯一确定一条连接。
+/// 缓存键：URL + 认证方法 + TLS 配置的组合唯一确定一条连接
+/// （core-publish §2.6：同 url+auth 但 CA/mTLS 不同的连接必须分开缓存）。
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 struct ConnKey {
     url: String,
     auth: AuthMethod,
+    tls: TlsConfig,
 }
 
 static CACHE: OnceLock<RwLock<HashMap<ConnKey, Arc<async_nats::Client>>>> = OnceLock::new();
@@ -23,15 +26,17 @@ fn cache() -> &'static RwLock<HashMap<ConnKey, Arc<async_nats::Client>>> {
     CACHE.get_or_init(|| RwLock::new(HashMap::new()))
 }
 
-/// 带缓存的认证连接：同 `(url, auth)` 复用已有连接，否则新建并缓存。
+/// 带缓存的认证连接：同 `(url, auth, tls)` 复用已有连接，否则新建并缓存。
 /// 连接失败不缓存（下次调用重试）。
 pub(crate) async fn connect_cached(
     url: &str,
     auth: &AuthMethod,
+    tls: &TlsConfig,
 ) -> Result<Arc<async_nats::Client>, String> {
     let key = ConnKey {
         url: url.to_string(),
         auth: auth.clone(),
+        tls: tls.clone(),
     };
 
     // 快路径：读锁查缓存
@@ -42,7 +47,7 @@ pub(crate) async fn connect_cached(
     }
 
     // 慢路径：新建连接（不持锁，避免长时间阻塞其他读者）
-    let client = connect_authenticated(url, auth).await?;
+    let client = connect_authenticated(url, auth, tls).await?;
 
     // 写锁存入（二次检查：并发场景下另一线程可能已建好）
     let client = Arc::new(client);
@@ -86,25 +91,20 @@ mod tests {
 
     #[test]
     fn conn_key_hash_equality() {
-        let k1 = ConnKey {
+        let k1 = ConnKey { url: "nats://a:4222".into(), auth: AuthMethod::None, tls: TlsConfig::default() };
+        let k2 = ConnKey { url: "nats://a:4222".into(), auth: AuthMethod::None, tls: TlsConfig::default() };
+        let k3 = ConnKey { url: "nats://b:4222".into(), auth: AuthMethod::None, tls: TlsConfig::default() };
+        let k4 = ConnKey { url: "nats://a:4222".into(), auth: AuthMethod::Token("t".into()), tls: TlsConfig::default() };
+        let k5 = ConnKey {
             url: "nats://a:4222".into(),
             auth: AuthMethod::None,
-        };
-        let k2 = ConnKey {
-            url: "nats://a:4222".into(),
-            auth: AuthMethod::None,
-        };
-        let k3 = ConnKey {
-            url: "nats://b:4222".into(),
-            auth: AuthMethod::None,
-        };
-        let k4 = ConnKey {
-            url: "nats://a:4222".into(),
-            auth: AuthMethod::Token("t".into()),
+            tls: TlsConfig { root_cert: "ca.pem".into(), ..Default::default() },
         };
         assert_eq!(k1, k2);
         assert_ne!(k1, k3);
         assert_ne!(k1, k4);
+        // TLS 配置差异 = 不同连接（core-publish §2.6）
+        assert_ne!(k1, k5);
         // Hash 一致性（HashMap 可用）
         let mut map = HashMap::new();
         map.insert(k1, 1);

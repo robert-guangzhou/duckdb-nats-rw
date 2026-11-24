@@ -6,6 +6,7 @@
 #include "nats_rw_copyto.hpp"
 #include "nats_rw_secret.hpp"
 #include "nats_rw_meta.hpp"
+#include "nats_rw_publish.hpp"
 
 #include "duckdb.hpp"
 #include "duckdb/common/exception.hpp"
@@ -41,6 +42,7 @@ static void LoadInternal(ExtensionLoader &loader) {
 	// 认证与元数据（TP-04 组，阶段四）
 	NatsRwSecret::Register(loader);
 	NatsRwMetaFunctions::Register(loader);
+	// BISECT: RegisterNatsRwPublish(loader);
 }
 
 void NatsRwExtension::Load(ExtensionLoader &loader) {

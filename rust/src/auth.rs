@@ -3,6 +3,8 @@
 
 use std::time::Duration;
 
+use crate::tls::TlsConfig;
+
 /// 连接建立的超时上限（阶段二引入，阶段四移至共享模块）。
 pub(crate) const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -67,12 +69,16 @@ fn sanitize_url(url: &str) -> String {
     crate::scan::sanitize_url(url)
 }
 
-/// 建立带认证的连接（统一 5s 超时与错误脱敏；scan/copy/meta 共用）。
+/// 建立带认证的连接（统一 5s 超时与错误脱敏；scan/copy/meta/publish 共用）。
+/// TLS 配置（core-publish 计划 §2.6）：全缺省 = 现状行为不变；否则叠加
+/// root_certificates / client_certificate / tls_required。
 pub(crate) async fn connect_authenticated(
     url: &str,
     auth: &AuthMethod,
+    tls: &TlsConfig,
 ) -> Result<async_nats::Client, String> {
     let connect_error = |detail: String| format!("connect to '{}' failed: {detail}", sanitize_url(url));
+    tls.validate().map_err(|e| format!("invalid TLS configuration: {e}"))?;
     let opts = async_nats::ConnectOptions::new();
     let opts = match auth {
         AuthMethod::None => opts,
@@ -87,6 +93,7 @@ pub(crate) async fn connect_authenticated(
             o
         }
     };
+    let opts = tls.apply(opts).map_err(|e| connect_error(format!("TLS options: {e}")))?;
     tokio::time::timeout(CONNECT_TIMEOUT, opts.connect(url.to_string()))
         .await
         .map_err(|_| connect_error(format!("timed out after {}s", CONNECT_TIMEOUT.as_secs())))?

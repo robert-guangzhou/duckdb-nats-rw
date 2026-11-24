@@ -104,7 +104,7 @@ corrosion_import_crate(
 
 
 
-set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp)
+set(EXTENSION_SOURCES src/nats_rw_extension.cpp src/nats_rw_scan.cpp src/nats_rw_copyto.cpp src/nats_rw_secret.cpp src/nats_rw_meta.cpp src/nats_rw_publish.cpp)
 
 # FFI 头文件滞后检测（2026-10-27 阶段四事故根治——"头文件没再生"）
 # lib.rs 或 cbindgen.toml 比 nats_rw_rust.h 新 → 编译前 FATAL_ERROR

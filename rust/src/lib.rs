@@ -9,8 +9,10 @@ mod conn_cache;
 mod copyto;
 mod ffi;
 mod meta;
+mod publish;
 mod scan;
 mod subject_match;
+mod tls;
 
 use std::ffi::{c_char, CStr, CString};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +26,30 @@ const VERSION_C: &str = concat!(env!("CARGO_PKG_VERSION"), "\0");
 
 /// COPY 整批写入的操作级超时上限（单条 publish-ack 超时在 copyto 模块）。
 const COPY_BATCH_TIMEOUT: Duration = Duration::from_secs(300);
+
+/// FFI 约定的 TLS 四字段（null/空串 = 未设置；tls_required 以 i32 传入）。
+unsafe fn tls_from_ffi(
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
+) -> Result<tls::TlsConfig, String> {
+    Ok(tls::TlsConfig {
+        root_cert: arg_opt(tls_root_cert)?.unwrap_or_default(),
+        required: tls_required != 0,
+        client_cert: arg_opt(tls_client_cert)?.unwrap_or_default(),
+        client_key: arg_opt(tls_client_key)?.unwrap_or_default(),
+    })
+}
+
+/// 可空 C 字符串 → Option<String>（null 或空串 → None）。
+unsafe fn arg_opt(p: *const c_char) -> Result<Option<String>, String> {
+    if p.is_null() {
+        return Ok(None);
+    }
+    let s = arg_str(p, "tls option")?;
+    Ok(if s.is_empty() { None } else { Some(s.to_string()) })
+}
 
 /// 进程内共享的 tokio 运行时：DuckDB 线程同步 block_on 使用，
 /// 不与 DuckDB 线程模型混用。
@@ -103,6 +129,10 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
     token: *const c_char,
     nkey: *const c_char,
     creds: *const c_char,
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
     subject: *const c_char,
     start_seq: u64,
     end_seq: u64,
@@ -122,6 +152,7 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
         let stream = arg_str(stream, "stream")?.to_string();
         let url = arg_str(url, "url")?.to_string();
         let auth = auth_from_ffi(user, password, token, nkey, creds)?;
+        let tls_cfg = tls_from_ffi(tls_root_cert, tls_required, tls_client_cert, tls_client_key)?;
         let subject = if subject.is_null() { None } else { Some(arg_str(subject, "subject")?.to_string()) };
         let mut json_extract = Vec::new();
         if !json_extract_paths.is_null() && json_extract_count > 0 {
@@ -143,6 +174,7 @@ pub unsafe extern "C" fn nats_rw_scan_execute(
             end_time_nanos: if end_time_nanos == i64::MIN { None } else { Some(end_time_nanos) },
             concurrency: concurrency.clamp(1, 64) as usize,
             json_extract,
+            tls: tls_cfg,
         };
         // 阶段二 MVP：有界快照一次性物化（计划三章 3.3 语义）
         runtime().block_on(scan::scan(params))
@@ -224,7 +256,6 @@ pub unsafe extern "C" fn nats_rw_scan_header_value(
         .unwrap_or(std::ptr::null())
 }
 
-#[no_mangle]
 /// json_extract 字段数（每条消息相同 = json_extract 路径数）。
 #[no_mangle]
 pub unsafe extern "C" fn nats_rw_scan_json_field_count(r: *const std::ffi::c_void, i: usize) -> u32 {
@@ -294,6 +325,10 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
     token: *const c_char,
     nkey: *const c_char,
     creds: *const c_char,
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
     subject: *const c_char,
     create_stream: i32,
     subjects: *const *const c_char,
@@ -310,6 +345,7 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
         let stream = arg_str(stream, "stream")?.to_string();
         let url = arg_str(url, "url")?.to_string();
         let auth = auth_from_ffi(user, password, token, nkey, creds)?;
+        let tls_cfg = tls_from_ffi(tls_root_cert, tls_required, tls_client_cert, tls_client_key)?;
         let subject = arg_str(subject, "subject")?.to_string();
         if count == 0 {
             return Ok(0);
@@ -328,7 +364,9 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
             };
             rows.push(copyto::CopyRow { subject: subject_i, payload: payload_i });
         }
-        let params = copyto::CopyParams { url, stream, auth, subject, create_stream: create_stream != 0 };
+        let params = copyto::CopyParams {
+            url, stream, auth, subject, create_stream: create_stream != 0, tls: tls_cfg,
+        };
         runtime().block_on(async move {
             tokio::time::timeout(COPY_BATCH_TIMEOUT, copyto::copy(params, rows))
                 .await
@@ -342,6 +380,163 @@ pub unsafe extern "C" fn nats_rw_copy_execute(
             }
             0
         }
+        Err(msg) => {
+            if let Ok(c) = CString::new(msg) {
+                *err_out = c.into_raw();
+            }
+            1
+        }
+    }
+}
+
+/// core NATS 单条发布（非 JetStream，core-publish 计划 §2.2）。secret-driven：
+/// url/认证/TLS 均由 C++ 侧从命中的 secret 解析后传入。confirm=1 时发布后
+/// flush（标量粒度）。返回码：0 成功；1 错误或 panic 转译（*err_out 需
+/// nats_rw_free_cstring 释放）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_publish(
+    url: *const c_char,
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
+    subject: *const c_char,
+    payload: *const u8,
+    payload_len: u64,
+    confirm: i32,
+    err_out: *mut *mut c_char,
+) -> i32 {
+    let run = || -> Result<(), String> {
+        if SHUTDOWN_DONE.load(Ordering::Acquire) {
+            return Err("nats_rw runtime already shut down (process exiting)".to_string());
+        }
+        let url = arg_str(url, "url")?.to_string();
+        let auth = auth_from_ffi(user, password, token, nkey, creds)?;
+        let tls_cfg = tls_from_ffi(tls_root_cert, tls_required, tls_client_cert, tls_client_key)?;
+        let subject = arg_str(subject, "subject")?.to_string();
+        let payload = if payload.is_null() || payload_len == 0 {
+            Vec::new()
+        } else {
+            std::slice::from_raw_parts(payload, payload_len as usize).to_vec()
+        };
+        let row = publish::PublishRow { subject, payload };
+        runtime().block_on(publish::publish_one(&url, &auth, &tls_cfg, row, confirm != 0))
+    };
+    match ffi::catch_panic(run) {
+        Ok(()) => 0,
+        Err(msg) => {
+            if let Ok(c) = CString::new(msg) {
+                *err_out = c.into_raw();
+            }
+            1
+        }
+    }
+}
+
+/// core NATS 批量发布（一批一连接；confirm=1 时批末一次 flush——批量粒度，
+/// PONG 覆盖此前全部 PUB）。返回码：0 成功（*published_out 为成功条数）；
+/// 1 错误或 panic 转译（此前已发布的条数已计入统计）。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_publish_batch(
+    url: *const c_char,
+    user: *const c_char,
+    password: *const c_char,
+    token: *const c_char,
+    nkey: *const c_char,
+    creds: *const c_char,
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
+    subjects: *const *const c_char,
+    payloads: *const *const u8,
+    payload_lens: *const u64,
+    count: u64,
+    confirm: i32,
+    published_out: *mut u64,
+    err_out: *mut *mut c_char,
+) -> i32 {
+    let run = || -> Result<u64, String> {
+        if SHUTDOWN_DONE.load(Ordering::Acquire) {
+            return Err("nats_rw runtime already shut down (process exiting)".to_string());
+        }
+        let url = arg_str(url, "url")?.to_string();
+        let auth = auth_from_ffi(user, password, token, nkey, creds)?;
+        let tls_cfg = tls_from_ffi(tls_root_cert, tls_required, tls_client_cert, tls_client_key)?;
+        if count == 0 {
+            return Ok(0);
+        }
+        let n = count as usize;
+        let mut rows = Vec::with_capacity(n);
+        for i in 0..n {
+            let s = *subjects.add(i);
+            let p = *payloads.add(i);
+            let len = *payload_lens.add(i) as usize;
+            let subject_i = arg_str(s, "row subject")?.to_string();
+            let payload_i = if p.is_null() || len == 0 { Vec::new() } else { std::slice::from_raw_parts(p, len).to_vec() };
+            rows.push(publish::PublishRow { subject: subject_i, payload: payload_i });
+        }
+        runtime().block_on(publish::publish_batch(&url, &auth, &tls_cfg, rows, confirm != 0))
+    };
+    match ffi::catch_panic(run) {
+        Ok(published) => {
+            if !published_out.is_null() {
+                *published_out = published;
+            }
+            0
+        }
+        Err(msg) => {
+            if let Ok(c) = CString::new(msg) {
+                *err_out = c.into_raw();
+            }
+            1
+        }
+    }
+}
+
+/// 发布统计查询（单行返回）。url_filter 为空 = 跨 url 聚合（url 列 "<all>"）；
+/// 非空 = 该 url 的计数（无记录则零值行）。reset=1 读后原子清零。
+/// last_error 为空串表示无错误；last_error_at_ms 为 -1 表示无记录。
+#[no_mangle]
+pub unsafe extern "C" fn nats_rw_publish_stats(
+    url_filter: *const c_char,
+    reset: i32,
+    out_url: *mut *mut c_char,
+    out_published: *mut i64,
+    out_errors: *mut i64,
+    out_last_error: *mut *mut c_char,
+    out_last_error_at_ms: *mut i64,
+    err_out: *mut *mut c_char,
+) -> i32 {
+    let run = || -> Result<(), String> {
+        let filter = if url_filter.is_null() { "" } else { CStr::from_ptr(url_filter).to_str().map_err(|_| "invalid utf-8 in url filter".to_string())? };
+        let row = publish::stats_query(filter, reset != 0);
+        if !out_url.is_null() {
+            *out_url = CString::new(row.url).map_err(|_| "url contains NUL".to_string())?.into_raw();
+        }
+        if !out_published.is_null() {
+            *out_published = row.published;
+        }
+        if !out_errors.is_null() {
+            *out_errors = row.errors;
+        }
+        if !out_last_error.is_null() {
+            *out_last_error = CString::new(row.last_error.unwrap_or_default())
+                .map_err(|_| "last_error contains NUL".to_string())?
+                .into_raw();
+        }
+        if !out_last_error_at_ms.is_null() {
+            *out_last_error_at_ms = row.last_error_at_ms.unwrap_or(-1);
+        }
+        Ok(())
+    };
+    match ffi::catch_panic(run) {
+        Ok(()) => 0,
         Err(msg) => {
             if let Ok(c) = CString::new(msg) {
                 *err_out = c.into_raw();
@@ -388,6 +583,10 @@ pub unsafe extern "C" fn nats_rw_streams_execute(
     token: *const c_char,
     nkey: *const c_char,
     creds: *const c_char,
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
     out: *mut *mut std::ffi::c_void,
     err_out: *mut *mut c_char,
 ) -> i32 {
@@ -397,7 +596,8 @@ pub unsafe extern "C" fn nats_rw_streams_execute(
         }
         let url = arg_str(url, "url")?.to_string();
         let auth = auth_from_ffi(user, password, token, nkey, creds)?;
-        runtime().block_on(meta::list_streams(&url, &auth))
+        let tls_cfg = tls_from_ffi(tls_root_cert, tls_required, tls_client_cert, tls_client_key)?;
+        runtime().block_on(meta::list_streams(&url, &auth, &tls_cfg))
     };
     match ffi::catch_panic(run) {
         Ok(data) => {
@@ -471,6 +671,10 @@ pub unsafe extern "C" fn nats_rw_stream_info_execute(
     token: *const c_char,
     nkey: *const c_char,
     creds: *const c_char,
+    tls_root_cert: *const c_char,
+    tls_required: i32,
+    tls_client_cert: *const c_char,
+    tls_client_key: *const c_char,
     out: *mut *mut std::ffi::c_void,
     err_out: *mut *mut c_char,
 ) -> i32 {
@@ -481,7 +685,8 @@ pub unsafe extern "C" fn nats_rw_stream_info_execute(
         let url = arg_str(url, "url")?.to_string();
         let stream = arg_str(stream, "stream")?.to_string();
         let auth = auth_from_ffi(user, password, token, nkey, creds)?;
-        runtime().block_on(meta::stream_info(&url, &auth, &stream))
+        let tls_cfg = tls_from_ffi(tls_root_cert, tls_required, tls_client_cert, tls_client_key)?;
+        runtime().block_on(meta::stream_info(&url, &auth, &tls_cfg, &stream))
     };
     match ffi::catch_panic(run) {
         Ok(data) => {

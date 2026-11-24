@@ -15,6 +15,7 @@ use async_nats::jetstream::stream::Config;
 
 use crate::auth::AuthMethod;
 use crate::conn_cache::connect_cached;
+use crate::tls::TlsConfig;
 
 pub(crate) struct CopyRow {
     pub(crate) subject: String,
@@ -27,13 +28,14 @@ pub(crate) struct CopyParams {
     pub(crate) stream: String,
     pub(crate) subject: String,
     pub(crate) create_stream: bool,
+    pub(crate) tls: TlsConfig,
 }
 
 /// 单条 publish-ack 的超时；整批操作超时由调用方（FFI 层）包裹。
 const PER_MESSAGE_TIMEOUT: Duration = Duration::from_secs(10);
 
 pub(crate) async fn copy(p: CopyParams, rows: Vec<CopyRow>) -> Result<u64, String> {
-    let client = connect_cached(&p.url, &p.auth).await?;
+    let client = connect_cached(&p.url, &p.auth, &p.tls).await?;
     let js = async_nats::jetstream::new((*client).clone());
 
     // 建流或校验流存在。流已存在时原样使用——绝不改写其 subject 过滤器
@@ -79,7 +81,7 @@ mod tests {
     fn params_are_owned() {
         // 编译期形态检查：CopyRow/CopyParams 为 owned 数据，FFI 侧无借用穿越
         let rows = vec![CopyRow { subject: "a".into(), payload: vec![1u8] }];
-        let p = CopyParams { url: "u".into(), stream: "s".into(), auth: crate::auth::AuthMethod::None, subject: "a".into(), create_stream: false };
+        let p = CopyParams { url: "u".into(), stream: "s".into(), auth: crate::auth::AuthMethod::None, subject: "a".into(), create_stream: false, tls: TlsConfig::default() };
         assert_eq!(rows.len(), 1);
         assert!(!p.create_stream);
     }

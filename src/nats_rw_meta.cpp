@@ -18,6 +18,11 @@ namespace duckdb {
 struct NatsRwResolved {
 	std::string url;
 	std::string user, password, token, nkey, creds;
+	// TLS 四字段（core-publish §2.6 透传）
+	std::string tls_root_cert;
+	bool tls_required = false;
+	std::string tls_client_cert;
+	std::string tls_client_key;
 };
 
 static NatsRwResolved ResolveConnection(ClientContext &context, const std::string &url_param,
@@ -54,6 +59,11 @@ static const char *OrNull(const std::string &s) {
 struct NatsRwStreamsBindData : public TableFunctionData {
 	std::string url;
 	std::string user, password, token, nkey, creds;
+	// TLS 四字段（core-publish §2.6 透传）
+	std::string tls_root_cert;
+	bool tls_required = false;
+	std::string tls_client_cert;
+	std::string tls_client_key;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto ret = make_uniq<NatsRwStreamsBindData>();
@@ -99,6 +109,10 @@ static unique_ptr<FunctionData> NatsRwStreamsBind(ClientContext &context, TableF
 	bind_data->token = resolved.token;
 	bind_data->nkey = resolved.nkey;
 	bind_data->creds = resolved.creds;
+	bind_data->tls_root_cert = resolved.tls_root_cert;
+	bind_data->tls_required = resolved.tls_required;
+	bind_data->tls_client_cert = resolved.tls_client_cert;
+	bind_data->tls_client_key = resolved.tls_client_key;
 
 	names.emplace_back("name");
 	return_types.emplace_back(LogicalType::VARCHAR);
@@ -119,7 +133,9 @@ static unique_ptr<GlobalTableFunctionState> NatsRwStreamsInitGlobal(ClientContex
 	char *err = nullptr;
 	int32_t rc =
 	    nats_rw_streams_execute(bind_data.url.c_str(), OrNull(bind_data.user), OrNull(bind_data.password),
-		                        OrNull(bind_data.token), OrNull(bind_data.nkey), OrNull(bind_data.creds), &raw, &err);
+		                        OrNull(bind_data.token), OrNull(bind_data.nkey), OrNull(bind_data.creds),
+		                        OrNull(bind_data.tls_root_cert), bind_data.tls_required ? 1 : 0,
+		                        OrNull(bind_data.tls_client_cert), OrNull(bind_data.tls_client_key), &raw, &err);
 	if (rc != 0) {
 		if (rc == 1 && err != nullptr) {
 			ThrowRustErrorMeta(err);
@@ -167,6 +183,11 @@ struct NatsRwInfoBindData : public TableFunctionData {
 	std::string stream;
 	std::string url;
 	std::string user, password, token, nkey, creds;
+	// TLS 四字段（core-publish §2.6 透传）
+	std::string tls_root_cert;
+	bool tls_required = false;
+	std::string tls_client_cert;
+	std::string tls_client_key;
 
 	unique_ptr<FunctionData> Copy() const override {
 		auto ret = make_uniq<NatsRwInfoBindData>();
@@ -218,6 +239,10 @@ static unique_ptr<FunctionData> NatsRwInfoBind(ClientContext &context, TableFunc
 	bind_data->token = resolved.token;
 	bind_data->nkey = resolved.nkey;
 	bind_data->creds = resolved.creds;
+	bind_data->tls_root_cert = resolved.tls_root_cert;
+	bind_data->tls_required = resolved.tls_required;
+	bind_data->tls_client_cert = resolved.tls_client_cert;
+	bind_data->tls_client_key = resolved.tls_client_key;
 
 	names.emplace_back("name");
 	return_types.emplace_back(LogicalType::VARCHAR);
@@ -244,7 +269,10 @@ static unique_ptr<GlobalTableFunctionState> NatsRwInfoInitGlobal(ClientContext &
 	char *err = nullptr;
 	int32_t rc = nats_rw_stream_info_execute(bind_data.url.c_str(), bind_data.stream.c_str(), OrNull(bind_data.user),
 	                                         OrNull(bind_data.password), OrNull(bind_data.token),
-	                                         OrNull(bind_data.nkey), OrNull(bind_data.creds), &raw, &err);
+	                                         OrNull(bind_data.nkey), OrNull(bind_data.creds),
+	                                         OrNull(bind_data.tls_root_cert), bind_data.tls_required ? 1 : 0,
+	                                         OrNull(bind_data.tls_client_cert), OrNull(bind_data.tls_client_key),
+	                                         &raw, &err);
 	if (rc != 0) {
 		if (rc == 1 && err != nullptr) {
 			ThrowRustErrorMeta(err);

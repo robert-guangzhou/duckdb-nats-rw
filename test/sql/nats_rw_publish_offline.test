@@ -1,0 +1,61 @@
+# name: test/sql/nats_rw_publish_offline.test
+# description: Offline checks for core NATS publish functions (TP-08a/b/c) — no server needed
+# group: [nats_rw]
+# plan: plans/nats-rw-duckdb-extension-test-plan.md §三 TP-08a/b/c（离线部分）
+
+require nats_rw
+
+# ---- TP-08a: 函数存在性（三个函数均注册）----
+query T
+SELECT count(*) FROM duckdb_functions() WHERE function_name IN ('nats_rw_publish', 'nats_rw_publish_batch', 'nats_rw_publish_stats');
+----
+3
+
+# ---- TP-08a: nats_rw_publish_stats DESCRIBE schema（五列）----
+query TT
+SELECT column_name, column_type FROM (DESCRIBE SELECT * FROM nats_rw_publish_stats()) ORDER BY column_name;
+----
+errors	BIGINT
+last_error	VARCHAR
+last_error_at	TIMESTAMP
+published	BIGINT
+url	VARCHAR
+
+# ---- TP-08c: stats 空态（聚合行，全零，无错误）----
+query TTIIT
+SELECT url, published, errors, last_error IS NULL, CAST(last_error_at AS VARCHAR) FROM nats_rw_publish_stats();
+----
+<all>	0	0	true	NULL
+
+# ---- TP-08c: url 过滤无匹配 = 零计数行（url 列为过滤串本身）----
+query TI
+SELECT url, errors FROM nats_rw_publish_stats(url := 'nats://nowhere:4222');
+----
+nats://nowhere:4222	0
+
+# ---- TP-08c: reset 读后清零（离线全零态下再验证参数接受 + 行为幂等）----
+query TI
+SELECT url, published FROM nats_rw_publish_stats(reset := true);
+----
+<all>	0
+
+# ---- TP-08b: 负向 —— 无任何 nats_rw secret（publish 必须经 secret，无匿名路径）----
+statement error nats_rw_publish: no nats_rw secret
+SELECT nats_rw_publish('audit.x', 'payload');
+
+# ---- TP-08b: 负向 —— 具名 secret 不存在 ----
+statement error no secret named 'does_not_exist'
+SELECT nats_rw_publish('audit.x', 'payload', secret_name := 'does_not_exist');
+
+# ---- TP-08b: 负向 —— secret 缺 URL 字段 ----
+statement error must carry URL
+CREATE SECRET nol (TYPE nats_rw, TOKEN 'tok');
+SELECT nats_rw_publish('audit.x', 'payload', secret_name := 'nol');
+
+# ---- batch 同款负向：无 secret ----
+statement error nats_rw_publish: no nats_rw secret
+SELECT * FROM nats_rw_publish_batch([{'subject': 'a.b', 'payload': 'x'}]);
+
+# ---- secret 类型校验：TLS_CLIENT_CERT 与 KEY 必须成对（A2 Binder 层）----
+statement error TLS_CLIENT_CERT and TLS_CLIENT_KEY together
+CREATE SECRET badtls (TYPE nats_rw, URL 'nats://h:4222', TLS_CLIENT_CERT 'c.pem');

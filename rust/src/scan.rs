@@ -11,6 +11,7 @@ use futures_util::StreamExt;
 
 use crate::auth::AuthMethod;
 use crate::conn_cache::connect_cached;
+use crate::tls::TlsConfig;
 use crate::subject_match::subject_matches;
 
 pub(crate) struct ScanParams {
@@ -27,6 +28,8 @@ pub(crate) struct ScanParams {
     /// JSON 字段路径列表（如 ["device_id", "location.zone"]）——payload 为 JSON 时
     /// 提取指定字段作为额外输出列；非 JSON payload 该列输出 NULL。
     pub(crate) json_extract: Vec<String>,
+    /// TLS 配置（core-publish §2.6；缺省 = 现状行为）。
+    pub(crate) tls: TlsConfig,
 }
 
 pub(crate) struct ScanMsg {
@@ -73,7 +76,7 @@ fn is_no_responders(err: &str) -> bool {
 }
 
 pub(crate) async fn scan(p: ScanParams) -> Result<Box<ScanData>, String> {
-    let client = connect_cached(&p.url, &p.auth).await?;
+    let client = connect_cached(&p.url, &p.auth, &p.tls).await?;
     let jetstream = async_nats::jetstream::new((*client).clone());
     let mut stream = jetstream
         .get_stream(p.stream.clone())

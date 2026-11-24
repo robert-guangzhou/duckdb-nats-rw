@@ -21,6 +21,11 @@ struct NatsRwCopyBindData : public FunctionData {
 	std::string stream;
 	std::string url = "nats://127.0.0.1:4222";
 	std::string user, password, token, nkey, creds;
+	// TLS 四字段（core-publish §2.6 透传）
+	std::string tls_root_cert;
+	bool tls_required = false;
+	std::string tls_client_cert;
+	std::string tls_client_key;
 	std::string subject; // 缺省 = 流名
 	bool create_stream = false;
 	bool has_payload_column = false;
@@ -142,6 +147,10 @@ static unique_ptr<FunctionData> NatsRwCopyBind(ClientContext &context, CopyFunct
 			bind_data->token = settings.token;
 			bind_data->nkey = settings.nkey;
 			bind_data->creds = settings.creds;
+			bind_data->tls_root_cert = settings.tls_root_cert;
+			bind_data->tls_required = settings.tls_required;
+			bind_data->tls_client_cert = settings.tls_client_cert;
+			bind_data->tls_client_key = settings.tls_client_key;
 		}
 	}
 	return std::move(bind_data);
@@ -312,7 +321,9 @@ static void NatsRwCopySink(ExecutionContext &context, FunctionData &bind_data_p,
 	int32_t rc = nats_rw_copy_execute(bind_data.stream.c_str(), bind_data.url.c_str(),
 	                                  NatsRwAuthOrNull2(bind_data.user), NatsRwAuthOrNull2(bind_data.password),
 	                                  NatsRwAuthOrNull2(bind_data.token), NatsRwAuthOrNull2(bind_data.nkey),
-	                                  NatsRwAuthOrNull2(bind_data.creds), bind_data.subject.c_str(),
+	                                  NatsRwAuthOrNull2(bind_data.creds), NatsRwAuthOrNull2(bind_data.tls_root_cert),
+	                                  bind_data.tls_required ? 1 : 0, NatsRwAuthOrNull2(bind_data.tls_client_cert),
+	                                  NatsRwAuthOrNull2(bind_data.tls_client_key), bind_data.subject.c_str(),
 	                                  bind_data.create_stream ? 1 : 0, subject_ptrs.data(), payload_ptrs.data(),
 	                                  payload_lens.data(), static_cast<uint64_t>(subjects.size()), &published, &err);
 	if (rc != 0 && err != nullptr) {

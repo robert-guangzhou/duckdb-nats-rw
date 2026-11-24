@@ -10,7 +10,7 @@ namespace duckdb {
 static constexpr const char *SECRET_TYPE = "nats_rw";
 
 // 与 nats CLI 风格一致的小写选项名；URL 为本扩展独有（secret 携带连接地址）
-static const char *const SECRET_OPTIONS[] = {"url", "user", "password", "token", "nkey", "creds"};
+static const char *const SECRET_OPTIONS[] = {"url", "user", "password", "token", "nkey", "creds", "tls_root_cert", "tls_client_cert", "tls_client_key"};
 
 static unique_ptr<BaseSecret> CreateNatsRwSecret(ClientContext &context, CreateSecretInput &input) {
 	auto secret = make_uniq<KeyValueSecret>(input.scope, input.type, input.provider, input.name);
@@ -37,6 +37,9 @@ static unique_ptr<BaseSecret> CreateNatsRwSecret(ClientContext &context, CreateS
 	if (has("user") != has("password")) {
 		throw InvalidInputException("A nats_rw secret takes USER and PASSWORD together");
 	}
+	if (has("tls_client_cert") != has("tls_client_key")) {
+		throw InvalidInputException("A nats_rw secret takes TLS_CLIENT_CERT and TLS_CLIENT_KEY together");
+	}
 	// 敏感字段脱敏（Dev Plan 六/TP-04c）；url 保持可见以支持 scope 调试
 	secret->redact_keys = {"password", "token", "nkey", "creds"};
 	return std::move(secret);
@@ -57,6 +60,7 @@ void NatsRwSecret::Register(ExtensionLoader &loader) {
 	for (auto option : SECRET_OPTIONS) {
 		function.named_parameters[option] = LogicalType(LogicalTypeId::VARCHAR);
 	}
+	function.named_parameters["tls_required"] = LogicalType(LogicalTypeId::BOOLEAN);
 	loader.RegisterFunction(function);
 }
 
@@ -118,6 +122,12 @@ static unique_ptr<SecretEntry> LookupScopedSecret(SecretManager &secret_manager,
 	return match.HasMatch() ? std::move(match.secret_entry) : nullptr;
 }
 
+NatsRwSecret::Settings NatsRwSecret::LookupDefault(ClientContext &context) {
+	// §2.4-2：通用 URL 匹配 → 无 scope secret（score 0）胜出；
+	// 多个无 scope secret 并存时由 DuckDB LookupSecret 标准语义解析（同 type/scope 后创建者胜）。
+	return Lookup(context, "", "nats://");
+}
+
 NatsRwSecret::Settings NatsRwSecret::Lookup(ClientContext &context, const std::string &name, const std::string &url) {
 	Settings settings;
 	auto &secret_manager = SecretManager::Get(context);
@@ -147,6 +157,15 @@ NatsRwSecret::Settings NatsRwSecret::Lookup(ClientContext &context, const std::s
 	settings.token = get("token");
 	settings.nkey = get("nkey");
 	settings.creds = get("creds");
+	settings.tls_root_cert = get("tls_root_cert");
+	settings.tls_client_cert = get("tls_client_cert");
+	settings.tls_client_key = get("tls_client_key");
+	{
+		Value v;
+		if (secret.TryGetValue("tls_required", v) && !v.IsNull()) {
+			settings.tls_required = v.GetValue<bool>();
+		}
+	}
 	return settings;
 }
 

@@ -39,6 +39,10 @@ int32_t nats_rw_scan_execute(const char *stream,
                              const char *token,
                              const char *nkey,
                              const char *creds,
+                             const char *tls_root_cert,
+                             int32_t tls_required,
+                             const char *tls_client_cert,
+                             const char *tls_client_key,
                              const char *subject,
                              uint64_t start_seq,
                              uint64_t end_seq,
@@ -96,6 +100,10 @@ int32_t nats_rw_copy_execute(const char *stream,
                              const char *token,
                              const char *nkey,
                              const char *creds,
+                             const char *tls_root_cert,
+                             int32_t tls_required,
+                             const char *tls_client_cert,
+                             const char *tls_client_key,
                              const char *subject,
                              int32_t create_stream,
                              const char *const *subjects,
@@ -106,6 +114,65 @@ int32_t nats_rw_copy_execute(const char *stream,
                              char **err_out);
 
 /**
+ * core NATS 单条发布（非 JetStream，core-publish 计划 §2.2）。secret-driven：
+ * url/认证/TLS 均由 C++ 侧从命中的 secret 解析后传入。confirm=1 时发布后
+ * flush（标量粒度）。返回码：0 成功；1 错误或 panic 转译（*err_out 需
+ * nats_rw_free_cstring 释放）。
+ */
+int32_t nats_rw_publish(const char *url,
+                        const char *user,
+                        const char *password,
+                        const char *token,
+                        const char *nkey,
+                        const char *creds,
+                        const char *tls_root_cert,
+                        int32_t tls_required,
+                        const char *tls_client_cert,
+                        const char *tls_client_key,
+                        const char *subject,
+                        const uint8_t *payload,
+                        uint64_t payload_len,
+                        int32_t confirm,
+                        char **err_out);
+
+/**
+ * core NATS 批量发布（一批一连接；confirm=1 时批末一次 flush——批量粒度，
+ * PONG 覆盖此前全部 PUB）。返回码：0 成功（*published_out 为成功条数）；
+ * 1 错误或 panic 转译（此前已发布的条数已计入统计）。
+ */
+int32_t nats_rw_publish_batch(const char *url,
+                              const char *user,
+                              const char *password,
+                              const char *token,
+                              const char *nkey,
+                              const char *creds,
+                              const char *tls_root_cert,
+                              int32_t tls_required,
+                              const char *tls_client_cert,
+                              const char *tls_client_key,
+                              const char *const *subjects,
+                              const uint8_t *const *payloads,
+                              const uint64_t *payload_lens,
+                              uint64_t count,
+                              int32_t confirm,
+                              uint64_t *published_out,
+                              char **err_out);
+
+/**
+ * 发布统计查询（单行返回）。url_filter 为空 = 跨 url 聚合（url 列 "<all>"）；
+ * 非空 = 该 url 的计数（无记录则零值行）。reset=1 读后原子清零。
+ * last_error 为空串表示无错误；last_error_at_ms 为 -1 表示无记录。
+ */
+int32_t nats_rw_publish_stats(const char *url_filter,
+                              int32_t reset,
+                              char **out_url,
+                              int64_t *out_published,
+                              int64_t *out_errors,
+                              char **out_last_error,
+                              int64_t *out_last_error_at_ms,
+                              char **err_out);
+
+/**
  * 列出全部流摘要。返回码与内存约定同 scan（0 成功，*out 需 nats_rw_streams_free）。
  */
 int32_t nats_rw_streams_execute(const char *url,
@@ -114,6 +181,10 @@ int32_t nats_rw_streams_execute(const char *url,
                                 const char *token,
                                 const char *nkey,
                                 const char *creds,
+                                const char *tls_root_cert,
+                                int32_t tls_required,
+                                const char *tls_client_cert,
+                                const char *tls_client_key,
                                 void **out,
                                 char **err_out);
 
@@ -139,6 +210,10 @@ int32_t nats_rw_stream_info_execute(const char *url,
                                     const char *token,
                                     const char *nkey,
                                     const char *creds,
+                                    const char *tls_root_cert,
+                                    int32_t tls_required,
+                                    const char *tls_client_cert,
+                                    const char *tls_client_key,
                                     void **out,
                                     char **err_out);
 

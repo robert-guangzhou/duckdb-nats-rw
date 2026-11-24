@@ -31,6 +31,11 @@ struct NatsRwScanBindData : public TableFunctionData {
 	std::string stream;
 	std::string url = "nats://127.0.0.1:4222";
 	std::string user, password, token, nkey, creds;
+	// TLS 四字段（core-publish §2.6 透传）
+	std::string tls_root_cert;
+	bool tls_required = false;
+	std::string tls_client_cert;
+	std::string tls_client_key;
 	bool has_subject = false;
 	std::string subject;
 	uint64_t start_seq = 1;
@@ -156,6 +161,10 @@ static unique_ptr<FunctionData> NatsRwScanBind(ClientContext &context, TableFunc
 			bind_data->token = settings.token;
 			bind_data->nkey = settings.nkey;
 			bind_data->creds = settings.creds;
+			bind_data->tls_root_cert = settings.tls_root_cert;
+			bind_data->tls_required = settings.tls_required;
+			bind_data->tls_client_cert = settings.tls_client_cert;
+			bind_data->tls_client_key = settings.tls_client_key;
 		}
 	}
 
@@ -204,7 +213,9 @@ static unique_ptr<GlobalTableFunctionState> NatsRwScanInitGlobal(ClientContext &
 	int32_t rc = nats_rw_scan_execute(
 	    bind_data.stream.c_str(), bind_data.url.c_str(), NatsRwAuthOrNull(bind_data.user),
 	    NatsRwAuthOrNull(bind_data.password), NatsRwAuthOrNull(bind_data.token), NatsRwAuthOrNull(bind_data.nkey),
-	    NatsRwAuthOrNull(bind_data.creds), bind_data.has_subject ? bind_data.subject.c_str() : nullptr,
+	    NatsRwAuthOrNull(bind_data.creds), NatsRwAuthOrNull(bind_data.tls_root_cert),
+	    bind_data.tls_required ? 1 : 0, NatsRwAuthOrNull(bind_data.tls_client_cert),
+	    NatsRwAuthOrNull(bind_data.tls_client_key), bind_data.has_subject ? bind_data.subject.c_str() : nullptr,
 	    bind_data.start_seq, bind_data.end_seq,
 	    bind_data.has_start_time ? bind_data.start_time_nanos : std::numeric_limits<int64_t>::min(),
 	    bind_data.has_end_time ? bind_data.end_time_nanos : std::numeric_limits<int64_t>::min(), bind_data.concurrency,
