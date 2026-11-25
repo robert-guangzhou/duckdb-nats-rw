@@ -1,0 +1,47 @@
+# name: test/sql/integration/tls.test
+# description: TLS 四字段行为（TP-09a-e）
+# group: [nats_rw]
+
+require nats_rw
+
+statement ok
+CREATE SECRET tls_ca (TYPE nats_rw, URL 'tls://nats_tls:4222',
+  TLS_ROOT_CERT '/workspace/tmp/tls-certs/ca.pem')
+
+query T
+SELECT nats_rw_publish('cap.t1', 'tls-roundtrip', 'tls_ca', true)
+----
+true
+
+# TP-09c（修正版）：连 TLS 专用服务器用明文 scheme → 服务器拒绝（真实负向）
+statement ok
+CREATE SECRET tls_plain_to_tls (TYPE nats_rw, URL 'nats://nats_tls:4222')
+
+statement error
+SELECT nats_rw_publish('tls.z', 'x', 'tls_plain_to_tls', true)
+----
+
+
+statement ok
+CREATE SECRET tls_mtls (TYPE nats_rw, URL 'tls://nats_mtls:4222',
+  TLS_ROOT_CERT '/workspace/tmp/tls-certs/ca.pem',
+  TLS_CLIENT_CERT '/workspace/tmp/tls-certs/client.pem',
+  TLS_CLIENT_KEY '/workspace/tmp/tls-certs/client-key.pem')
+
+query T
+SELECT nats_rw_publish('cap.m1', 'mtls-ok', 'tls_mtls', true)
+----
+true
+
+statement ok
+CREATE SECRET tls_unset (TYPE nats_rw, URL 'nats://nats:4222')
+
+query T
+SELECT nats_rw_publish('cap.reg', 'plain-still-works', 'tls_unset', true)
+----
+true
+
+query T
+SELECT count(*) = 1 FROM nats_rw_scan('cap_stream', url := 'nats://nats:4222', subject := 'cap.reg')
+----
+true

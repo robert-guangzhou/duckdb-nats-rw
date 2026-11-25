@@ -45,10 +45,25 @@ impl TlsConfig {
     }
 
     /// 应用到连接选项（在认证选项之后叠加）。
+    /// async-nats 0.53 行为适配：
+    /// - 全缺省 → `tls_optional()`（服务器决定 TLS，兼容 `nats://` 明文——0.50 行为）
+    /// - 有 TLS 字段 → 按 0.53 语义应用（`add_root_certificates` 等隐式要求 `tls://` URL）
+    /// - `TLS_REQUIRED=true` → `require_tls(true)`（明文 URL 直接拒绝）
     pub(crate) fn apply(
         &self,
         opts: async_nats::ConnectOptions,
     ) -> Result<async_nats::ConnectOptions, String> {
+        if self.is_unset() {
+            // 全缺省：让服务器决定是否 TLS——兼容 nats://（明文）和 tls://（TLS 服务器）
+            return Ok(opts.tls_optional());
+        }
+        let opts = if self.required {
+            opts.require_tls(true)
+        } else {
+            // 有 TLS 字段但未强制 → tls_optional 优先（0.53 语义：不主动要求 TLS，
+            // 但保留 TLS 配置供 tls:// URL 使用）
+            opts.tls_optional()
+        };
         let opts = if self.root_cert.is_empty() {
             opts
         } else {
@@ -62,7 +77,7 @@ impl TlsConfig {
                 PathBuf::from(&self.client_key),
             )
         };
-        Ok(if self.required { opts.require_tls(true) } else { opts })
+        Ok(opts)
     }
 }
 

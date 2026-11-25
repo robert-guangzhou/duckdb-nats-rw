@@ -9,7 +9,7 @@ description = "NATS JetStream read/write core for the nats_rw DuckDB extension"
 crate-type = ["staticlib"]
 
 [dependencies]
-async-nats = "0.50"
+async-nats = "0.53"
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 serde_json = "1"
